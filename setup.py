@@ -7,7 +7,7 @@ def readme():
 
 
 setup(name='cellbase',
-      version='0.1.1',
+      version='0.1.2',
       description='Abstraction layer for accessing spreadsheet as database',
       long_description=readme(),
       long_description_content_type='text/markdown',
@@ -15,7 +15,7 @@ setup(name='cellbase',
       author_email='imjp0921@gmail.com',
       url='https://github.com/imjp94/cellbase',
       license='MIT',
-      packages=find_packages(),
+      packages=find_packages(exclude=['tests']),
       install_requires=['openpyxl'],
       zip_safe=False,
       include_package_data=True,
