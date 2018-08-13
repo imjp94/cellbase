@@ -7,7 +7,7 @@ def readme():
 
 
 setup(name='cellbase',
-      version='0.1.1',
+      version='0.1.2',
       description='Abstraction layer for accessing spreadsheet as database',
       long_description=readme(),
       long_description_content_type='text/markdown',

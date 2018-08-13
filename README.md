@@ -1,7 +1,7 @@
 [![Build Status](https://travis-ci.com/imjp94/cellbase.svg?branch=dev)](https://travis-ci.com/imjp94/cellbase)
 [![Build Status](https://travis-ci.com/imjp94/cellbase.svg?branch=master)](https://travis-ci.com/imjp94/cellbase)
 
-# Cellbase v0.1.1
+# Cellbase v0.1.2
 
 Abstraction layer for accessing spreadsheet as database, built on top
 of [openpyxl](https://openpyxl.readthedocs.io/en/stable/).
