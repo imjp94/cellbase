@@ -124,3 +124,5 @@ pip-selfcheck.json
 
 # Output
 /out
+/res
+sheets.googleapis.com-python.json

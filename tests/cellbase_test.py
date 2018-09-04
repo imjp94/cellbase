@@ -2,13 +2,14 @@ import unittest  # TODO: Switch to pytest
 
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment, Protection
 from openpyxl.styles.numbers import FORMAT_TEXT
-from cellbase import Cellbase, DAO, Entity, CellFormatter
-from cellbase.celltable import Celltable
+from cellbase.helper import DAO, Entity, CellFormatter
+from cellbase import LocalCellbase
+from cellbase.celltable import LocalCelltable
 
 
 class CellbaseTest(unittest.TestCase):
     def setUp(self):
-        self.cellbase = Cellbase().load("../out/not_exist.xlsx")
+        self.cellbase = LocalCellbase().load("../out/not_exist.xlsx")
         self.cellbase.register(on_create=SimpleDAO.on_create())
         self.dao = SimpleDAO(self.cellbase)
         self.assertEqual(Simple(id=1, name="name"), Simple(id=1, name="name"))  # Test entity's equality
@@ -117,7 +118,7 @@ class CellbaseTest(unittest.TestCase):
         self.assertTrue(SimpleDAO.TABLE_NAME not in self.cellbase)
         # __setitem__
         with self.assertRaises(AssertionError):
-            self.cellbase[SimpleDAO.TABLE_NAME] = Celltable(
+            self.cellbase[SimpleDAO.TABLE_NAME] = LocalCelltable(
                 self.cellbase.workbook.create_sheet(title=SimpleDAO.TABLE_NAME))
 
 

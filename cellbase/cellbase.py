@@ -1,23 +1,25 @@
 import os
+from abc import ABC, abstractmethod
 
 from openpyxl import Workbook, load_workbook
 
 from cellbase.helper import CellFormatter
-from cellbase.celltable import Celltable
+from cellbase.celltable import Celltable, LocalCelltable
 
 
-class Cellbase:
+class Cellbase(ABC):
     """
-    Cellbase is equivalent to :class:`Workbook` which stores :class:`Celltable`
-    """
+        Cellbase is equivalent to :class:`Workbook` which stores :class:`Celltable`
+        """
     DEFAULT_FILENAME = 'cellbase.xlsx'
 
     def __init__(self):
-        self.filename = os.path.join(os.getcwd(), Cellbase.DEFAULT_FILENAME)
+        self.filename = Cellbase.DEFAULT_FILENAME
+        self.workbook = None
         self.on_create = {}
-        self.workbook = Workbook()
         self.celltables = {}
 
+    @abstractmethod
     def load(self, filename):
         """
         Load workbook from given filename
@@ -31,12 +33,9 @@ class Cellbase:
         :return: self
         :rtype: Cellbase
         """
-        self.filename = filename
-        self.workbook = load_workbook(filename) if os.path.exists(filename) else Workbook()
-        for worksheet in self.workbook.worksheets:
-            self.celltables[worksheet.title] = Celltable(worksheet)
-        return self
+        pass
 
+    @abstractmethod
     def remove_empty_cols(self, worksheet_name):
         """
         Remove 1st row's columns where its value is None. It does not inspect the whole column, so use it with care if
@@ -45,9 +44,47 @@ class Cellbase:
         :param worksheet_name: Name of worksheet to remove empty columns
         :type worksheet_name str
         """
-        worksheet = self.workbook[worksheet_name]
-        for empty_col in reversed([col_id for col_id in worksheet[1] if col_id.value is None]):
-            worksheet.delete_cols(empty_col.col_idx)
+        pass
+
+    @abstractmethod
+    def create_if_none(self, worksheet_name):
+        """
+        Create worksheet and add to cell_tables if there's no such worksheet. It is first called in every data
+        accessing methods like query, insert, update, etc.
+
+        :param worksheet_name: Name of worksheet to inspect or create if required
+        :type worksheet_name: str
+        """
+        pass
+
+    @abstractmethod
+    def drop(self, worksheet_name):
+        """
+        Delete specified worksheet.
+
+        :param worksheet_name: Name of worksheet to delete
+        :type worksheet_name: str
+        """
+        pass
+
+    @abstractmethod
+    def save_as(self, filename, overwrite=False):
+        """
+        Save workbook to filename. FileExistsError will be raised if file exists and overwrite is False.
+
+        :param filename: Path to save the workbook
+        :type filename: str
+        :param overwrite: Whether to overwrite if file exists
+        :type overwrite: bool
+        :raises FileExitsError: File exists and overwrite is False
+        """
+        pass
+
+    def save(self):
+        """
+        Save workbook to the filename specified in open, overwrite if file exist.
+        """
+        self.save_as(self.filename, overwrite=True)
 
     def register(self, on_create):
         """
@@ -60,22 +97,6 @@ class Cellbase:
         :return:
         """
         self.on_create.update(on_create)
-
-    def create_if_none(self, worksheet_name):
-        """
-        Create worksheet and add to cell_tables if there's no such worksheet. It is first called in every data
-        accessing methods like query, insert, update, etc.
-
-        :param worksheet_name: Name of worksheet to inspect or create if required
-        :type worksheet_name: str
-        """
-        if worksheet_name not in self.celltables:
-            if self.on_create is None:
-                raise ValueError(
-                    "Trying to create Celltable '%s' without specifying details in on_create" % worksheet_name)
-            worksheet = self.workbook.create_sheet(title=worksheet_name)
-            worksheet.append(self.on_create[worksheet_name])
-            self.celltables[worksheet.title] = Celltable(worksheet)
 
     def query(self, worksheet_name, where=None):
         """
@@ -213,42 +234,6 @@ class Cellbase:
             formatter, where=where, select=select
         )
 
-    def drop(self, worksheet_name):
-        """
-        Delete specified worksheet.
-
-        :param worksheet_name: Name of worksheet to delete
-        :type worksheet_name: str
-        """
-        worksheet_to_drop = self.celltables[worksheet_name].worksheet
-        # Workbook must contain at least 1 visible sheet
-        visible_sheets = [worksheet for worksheet in self.workbook.worksheets
-                          if worksheet.sheet_state == 'visible']
-        if len(visible_sheets) == 1 and visible_sheets[0] is worksheet_to_drop:
-            self.workbook.create_sheet()
-        self.workbook.remove(worksheet_to_drop)
-        self.celltables.pop(worksheet_name)
-
-    def save(self):
-        """
-        Save workbook to the filename specified in open, overwrite if file exist.
-        """
-        self.save_as(self.filename, overwrite=True)
-
-    def save_as(self, filename, overwrite=False):
-        """
-        Save workbook to filename. FileExistsError will be raised if file exists and overwrite is False.
-
-        :param filename: Path to save the workbook
-        :type filename: str
-        :param overwrite: Whether to overwrite if file exists
-        :type overwrite: bool
-        :raises FileExitsError: File exists and overwrite is False
-        """
-        if os.path.exists(filename) and overwrite is False:
-            raise FileExistsError("%s already exists, set overwrite=True if this is expected.")
-        self.workbook.save(filename)
-
     def __len__(self):
         """
         Return numbers of worksheet
@@ -295,3 +280,47 @@ class Cellbase:
         :rtype: bool
         """
         return worksheet_name in self.celltables
+
+
+class LocalCellbase(Cellbase):
+
+    def __init__(self):
+        super().__init__()
+        self.filename = os.path.join(os.getcwd(), Cellbase.DEFAULT_FILENAME)
+        self.workbook = Workbook()
+
+    def load(self, filename):
+        self.filename = filename
+        self.workbook = load_workbook(filename) if os.path.exists(filename) else Workbook()
+        for worksheet in self.workbook.worksheets:
+            self.celltables[worksheet.title] = LocalCelltable(worksheet)
+        return self
+
+    def remove_empty_cols(self, worksheet_name):
+        worksheet = self.workbook[worksheet_name]
+        for empty_col in reversed([col_id for col_id in worksheet[1] if col_id.value is None]):
+            worksheet.delete_cols(empty_col.col_idx)
+
+    def create_if_none(self, worksheet_name):
+        if worksheet_name not in self.celltables:
+            if self.on_create is None:
+                raise ValueError(
+                    "Trying to create Celltable '%s' without specifying details in on_create" % worksheet_name)
+            worksheet = self.workbook.create_sheet(title=worksheet_name)
+            worksheet.append(self.on_create[worksheet_name])
+            self.celltables[worksheet.title] = LocalCelltable(worksheet)
+
+    def drop(self, worksheet_name):
+        worksheet_to_drop = self.celltables[worksheet_name].worksheet
+        # Workbook must contain at least 1 visible sheet
+        visible_sheets = [worksheet for worksheet in self.workbook.worksheets
+                          if worksheet.sheet_state == 'visible']
+        if len(visible_sheets) == 1 and visible_sheets[0] is worksheet_to_drop:
+            self.workbook.create_sheet()
+        self.workbook.remove(worksheet_to_drop)
+        self.celltables.pop(worksheet_name)
+
+    def save_as(self, filename, overwrite=False):
+        if os.path.exists(filename) and overwrite is False:
+            raise FileExistsError("%s already exists, set overwrite=True if this is expected.")
+        self.workbook.save(filename)
