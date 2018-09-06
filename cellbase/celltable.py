@@ -1,4 +1,5 @@
 import collections
+import itertools
 import warnings
 from abc import ABC, abstractmethod
 from copy import copy
@@ -383,3 +384,136 @@ class LocalCelltable(Celltable):
         if where is None and formatter.is_empty():
             return 0
         return self.traverse(lambda cell: formatter.format(cell), where=where, select=select)
+
+
+class GoogleCelltable(Celltable):
+    def __init__(self, worksheet):
+        super().__init__(worksheet)
+        all_rows = self.worksheet.get_all_values('cell')
+        self.col_ids = [col_id for col_id in all_rows[0] if col_id.value]
+        self.cols = {col.value: [] for col in self.col_ids}
+        self.rows = collections.OrderedDict()
+        self._max_row = 1
+        for row in all_rows[1:]:
+            row_idx = row[0].row
+            cells_in_row = {}
+            for col_id in self.col_ids:
+                cell = row[col_id.col - 1]  # -1 as row is list(0 indexed)
+                if cell.value and self._max_row != row_idx:
+                    self._max_row = max(self._max_row, row_idx)
+                if self._max_row >= row_idx:
+                    self.cols[col_id.value].append(cell)
+                    cells_in_row[col_id.value] = cell
+            if self._max_row >= row_idx:
+                self.rows[row_idx] = cells_in_row
+
+    def update_max_row(self):
+        max_rows = []
+        for col_id in self.col_ids:
+            max_rows.append(max([cell.row for cell in self.cols[col_id.value] if cell.value]))
+        self._max_row = max(max_rows)
+        return self._max_row
+
+    def value_in_dict_to_row_value(self, value_in_dict):
+        """ Convert dictionary to list according the sequence of col_ids """
+        col_seqs = [col_id.col for col_id in self.col_ids]
+        values = []
+        for col_idx in range(1, self.col_ids[-1].col + 1):
+            if col_idx in col_seqs:
+                values.append(value_in_dict[self.col_ids[col_seqs.index(col_idx)].value])
+            else:
+                values.append('')
+        return values
+
+    def query(self, where=None):
+        rows_to_return = []
+        for row_idx in self._row_and_col_where(where):
+            values = {DAO.COL_ROW_IDX: row_idx}
+            for key, cell in self.rows[row_idx].items():
+                values[key] = cell.value
+            rows_to_return.append(values)
+        return rows_to_return
+
+    def insert(self, value_in_dict):
+        # TODO: Use update_cell if max_row < self.worksheet.rows
+        self.worksheet.insert_rows(self._max_row, values=self.value_in_dict_to_row_value(value_in_dict))
+        self._max_row += 1
+        new_row_idx = self._max_row
+        self.rows[new_row_idx] = {}
+        new_row = self.worksheet.get_row(new_row_idx, 'cell')
+        for col_id in self.col_ids:
+            new_cell = new_row[col_id.col - 1]
+            self.rows[new_row_idx][col_id.value] = new_cell
+            self.cols[col_id.value].append(new_cell)
+        return new_row_idx
+
+    def update(self, value_in_dict, where=None):
+        if where is None:
+            row = self.rows[value_in_dict[DAO.COL_ROW_IDX]]
+            for cell in list(row.values())[1:]:
+                cell.value = value_in_dict[self._col_idx_to_col_id(cell.col).value]
+            return 1
+        return self.traverse(
+            lambda cell: set_cell_value(cell, value_in_dict[self._col_idx_to_col_id(cell.col).value]),
+            where=where,
+            select=[col_id.value for col_id in self.col_ids if col_id.value in value_in_dict]
+        )
+
+    def delete(self, where=None):
+        row_idxs_where = self._row_and_col_where(where)
+        deleted_row_count = len(row_idxs_where)
+        if deleted_row_count is 0:
+            return 0
+        # Group row_idxs_where into adjacent groups
+        delete_grps = [[x for _, x in grp]
+                       for _, grp in itertools.groupby(enumerate(row_idxs_where), lambda x: x[1] - x[0])]
+        first_deleted_row = delete_grps[0][0]
+        deleted_count = 0
+        for delete_grp in delete_grps:
+            # Pop row where condition matched
+            print("Delete group: %s" % delete_grp)
+            delete_size = len(delete_grp)
+            self._max_row -= delete_size
+            self.worksheet.delete_rows(delete_grp[0] - deleted_count, delete_size)
+            deleted_count += delete_size
+        # Resize self.rows & self.cols to new size
+        for row_idx in row_idxs_where:
+            self.rows.pop(row_idx)
+        self._reorder_rows(row_idxs_where, self._max_row + deleted_count, deleted_row_count)
+        for col_id in self.col_ids:
+            del self.cols[col_id.value][first_deleted_row:self._max_row + deleted_count]
+        # Read affected rows & update the cell reference in self.rows & self.cols
+        affected_rows = self.worksheet.get_values((first_deleted_row, 1), (self._max_row, self.col_ids[-1].col), 'cell')
+        for row in affected_rows:
+            row_idx = row[0].row
+            for col_id in self.col_ids:
+                cell = row[col_id.col - 1]
+                self.rows[row_idx][col_id.value] = cell
+                self.cols[col_id.value][row_idx - 2] = cell
+        return deleted_row_count
+
+    def traverse(self, fn, where=None, select=None):
+        if callable(fn) is False:
+            raise TypeError("Expected callable for argument fn(cell)")
+        row_idxs_where = self._row_idxs_where(where)
+        cells_to_update = []
+        for row_idx in row_idxs_where:
+            select = [col_id.value for col_id in self.col_ids] if select is None else select
+            for matched_col_id in [col_id for col_id in self.col_ids if col_id.value in select]:
+                cell = self.rows[row_idx][matched_col_id.value]
+                cell.unlink()
+                fn(cell)  # Expect callable to modify cell
+                cells_to_update.append(cell)
+                # No need to update cols as it share same reference with row
+        self.worksheet.update_cells(cells_to_update)
+        for cell in cells_to_update:
+            cell.link(self.worksheet)
+        return len(row_idxs_where)
+
+    def format(self, formatter, where=None, select=None):
+        if where is None and formatter.is_empty():
+            return 0
+        return self.traverse(lambda cell: formatter.format(cell), where=where, select=select)
+
+    def __len__(self):
+        return self._max_row - 1

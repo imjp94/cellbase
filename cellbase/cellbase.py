@@ -1,10 +1,12 @@
 import os
 from abc import ABC, abstractmethod
 
+import pygsheets
 from openpyxl import Workbook, load_workbook
+from pygsheets import ExportType, SpreadsheetNotFound
 
 from cellbase.helper import CellFormatter
-from cellbase.celltable import Celltable, LocalCelltable
+from cellbase.celltable import Celltable, LocalCelltable, GoogleCelltable
 
 
 class Cellbase(ABC):
@@ -324,3 +326,43 @@ class LocalCellbase(Cellbase):
         if os.path.exists(filename) and overwrite is False:
             raise FileExistsError("%s already exists, set overwrite=True if this is expected.")
         self.workbook.save(filename)
+
+
+class GoogleCellbase(Cellbase):
+    def __init__(self):
+        super().__init__()
+
+    def load(self, filename, client_secret='client_secret.json', service_account_file=None, credentials_directory='',
+             template=None, on_create_folder=None):
+        self.filename = filename
+        client = pygsheets.authorize(client_secret, service_account_file)
+        try:
+            self.workbook = client.open(filename)
+        except SpreadsheetNotFound:
+            self.workbook = client.create(filename, template, on_create_folder or 'root')
+        for worksheet in self.workbook.worksheets():
+            self.celltables[worksheet.title] = GoogleCelltable(worksheet)
+        return self
+
+    def remove_empty_cols(self, worksheet_name):
+        worksheet = self.workbook.worksheet_by_title(worksheet_name)
+        for empty_col in reversed([col_id for col_id in worksheet[1] if col_id.value is None]):
+            worksheet.delete_cols(empty_col.col_idx)
+
+    def create_if_none(self, worksheet_name):
+        if worksheet_name not in self.celltables:
+            if self.on_create is None:
+                raise ValueError(
+                    "Trying to create Celltable '%s' without specifying details in on_create" % worksheet_name)
+            variables = self.on_create[worksheet_name]
+            worksheet = self.workbook.add_worksheet(worksheet_name)
+            worksheet.insert_rows(1, values=variables)
+            self.celltables[worksheet.title] = GoogleCelltable(worksheet)
+
+    def drop(self, worksheet_name):
+        worksheet_to_drop = self.workbook.worksheet_by_title(worksheet_name)
+        self.workbook.del_worksheet(worksheet_to_drop)
+        self.celltables.pop(worksheet_name)
+
+    def save_as(self, filename, overwrite=False, file_format=ExportType.XLS):
+        self.workbook.export(file_format, '', filename)
