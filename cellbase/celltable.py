@@ -381,7 +381,7 @@ class LocalCelltable(Celltable):
         return len(row_idxs_where)
 
     def format(self, formatter, where=None, select=None):
-        if where is None and formatter.is_empty():
+        if where is None and len(formatter) == 0:
             return 0
         return self.traverse(lambda cell: formatter.format(cell), where=where, select=select)
 
@@ -511,7 +511,7 @@ class GoogleCelltable(Celltable):
         return len(row_idxs_where)
 
     def format(self, formatter, where=None, select=None):
-        if where is None and formatter.is_empty():
+        if where is None and len(formatter) == 0:
             return 0
         return self.traverse(lambda cell: formatter.format(cell), where=where, select=select)
 

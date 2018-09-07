@@ -2,7 +2,7 @@ import unittest  # TODO: Switch to pytest
 
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment, Protection
 from openpyxl.styles.numbers import FORMAT_TEXT
-from cellbase.helper import DAO, Entity, CellFormatter
+from cellbase.helper import DAO, Entity, LocalCellFormatter
 from cellbase import LocalCellbase
 from cellbase.celltable import LocalCelltable
 
@@ -59,7 +59,7 @@ class CellbaseTest(unittest.TestCase):
         alignment = Alignment(horizontal="left")
         number_format = FORMAT_TEXT
         protection = Protection(hidden=True)
-        formatter = CellFormatter(
+        formatter = LocalCellFormatter(
             font=font, fill=fill, border=border,
             number_format=number_format, protection=protection,
             alignment=alignment)

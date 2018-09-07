@@ -5,7 +5,7 @@ import pygsheets
 from openpyxl import Workbook, load_workbook
 from pygsheets import ExportType, SpreadsheetNotFound
 
-from cellbase.helper import CellFormatter
+from cellbase.helper import CellFormatter, LocalCellFormatter
 from cellbase.celltable import Celltable, LocalCelltable, GoogleCelltable
 
 
@@ -227,7 +227,7 @@ class Cellbase(ABC):
         """
         self.create_if_none(worksheet_name)
         if formatter is None:
-            formatter = CellFormatter(
+            formatter = LocalCellFormatter(
                 font=font, fill=fill, border=border,
                 number_format=number_format, protection=protection,
                 alignment=alignment, style=style
