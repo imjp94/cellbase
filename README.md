@@ -274,7 +274,7 @@ dao.format(where, select, fill, font, border...)
 # or wrap all formats in CellFormatter
 dao.format(where, select, cell_formatter)
 ```
-See [CellFormatter](cellbase/helper/helper.py), for more information.
+See [CellFormatter](cellbase/helper.py), for more information.
 
 ### Low Level Access
 

@@ -2,8 +2,10 @@ import unittest  # TODO: Switch to pytest
 
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment, Protection
 from openpyxl.styles.numbers import FORMAT_TEXT
-from cellbase.helper import DAO, Entity, LocalCellFormatter
+
 from cellbase import LocalCellbase
+from cellbase.helper import DAO, Entity
+from cellbase.formatter import LocalCellFormatter
 from cellbase.celltable import LocalCelltable
 
 

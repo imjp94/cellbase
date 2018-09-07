@@ -5,7 +5,7 @@ import pygsheets
 from openpyxl import Workbook, load_workbook
 from pygsheets import ExportType, SpreadsheetNotFound
 
-from cellbase.helper import CellFormatter, LocalCellFormatter
+from cellbase.formatter import CellFormatter, LocalCellFormatter
 from cellbase.celltable import Celltable, LocalCelltable, GoogleCelltable
 
 
