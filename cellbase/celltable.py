@@ -1,8 +1,9 @@
 import collections
-import itertools
 import warnings
 from abc import ABC, abstractmethod
 from copy import copy
+
+from pygsheets import Cell
 
 from cellbase.helper import DAO
 
@@ -401,10 +402,8 @@ class GoogleCelltable(Celltable):
                 cell = row[col_id.col - 1]  # -1 as row is list(0 indexed)
                 if cell.value and self._max_row != row_idx:
                     self._max_row = max(self._max_row, row_idx)
-                if self._max_row >= row_idx:
                     self.cols[col_id.value].append(cell)
                     cells_in_row[col_id.value] = cell
-            if self._max_row >= row_idx:
                 self.rows[row_idx] = cells_in_row
 
     def update_max_row(self):
@@ -460,36 +459,11 @@ class GoogleCelltable(Celltable):
         )
 
     def delete(self, where=None):
-        row_idxs_where = self._row_and_col_where(where)
-        deleted_row_count = len(row_idxs_where)
-        if deleted_row_count is 0:
+        row_idxs_to_delete = self._row_and_col_where(where)
+        deleted_row_count = len(row_idxs_to_delete)
+        if deleted_row_count == 0:
             return 0
-        # Group row_idxs_where into adjacent groups
-        delete_grps = [[x for _, x in grp]
-                       for _, grp in itertools.groupby(enumerate(row_idxs_where), lambda x: x[1] - x[0])]
-        first_deleted_row = delete_grps[0][0]
-        deleted_count = 0
-        for delete_grp in delete_grps:
-            # Pop row where condition matched
-            print("Delete group: %s" % delete_grp)
-            delete_size = len(delete_grp)
-            self._max_row -= delete_size
-            self.worksheet.delete_rows(delete_grp[0] - deleted_count, delete_size)
-            deleted_count += delete_size
-        # Resize self.rows & self.cols to new size
-        for row_idx in row_idxs_where:
-            self.rows.pop(row_idx)
-        self._reorder_rows(row_idxs_where, self._max_row + deleted_count, deleted_row_count)
-        for col_id in self.col_ids:
-            del self.cols[col_id.value][first_deleted_row:self._max_row + deleted_count]
-        # Read affected rows & update the cell reference in self.rows & self.cols
-        affected_rows = self.worksheet.get_values((first_deleted_row, 1), (self._max_row, self.col_ids[-1].col), 'cell')
-        for row in affected_rows:
-            row_idx = row[0].row
-            for col_id in self.col_ids:
-                cell = row[col_id.col - 1]
-                self.rows[row_idx][col_id.value] = cell
-                self.cols[col_id.value][row_idx - 2] = cell
+        self._update_cells_then_link(self._pop_rows(row_idxs_to_delete))
         return deleted_row_count
 
     def traverse(self, fn, where=None, select=None):
@@ -505,15 +479,41 @@ class GoogleCelltable(Celltable):
                 fn(cell)  # Expect callable to modify cell
                 cells_to_update.append(cell)
                 # No need to update cols as it share same reference with row
-        self.worksheet.update_cells(cells_to_update)
-        for cell in cells_to_update:
-            cell.link(self.worksheet)
+        self._update_cells_then_link(cells_to_update)
         return len(row_idxs_where)
 
     def format(self, formatter, where=None, select=None):
         if where is None and len(formatter) == 0:
             return 0
         return self.traverse(lambda cell: formatter.format(cell), where=where, select=select)
+
+    def _update_cells_then_link(self, cells):
+        self.worksheet.update_cells(cells)
+        for cell in cells:
+            cell.link(self.worksheet)
+
+    def _pop_rows(self, row_idxs_to_delete):
+        row_idxs_affected = list(range(row_idxs_to_delete[0], self._max_row + 1))
+        row_idxs_remain = [row_idx for row_idx in row_idxs_affected if row_idx not in row_idxs_to_delete]
+        affected_cells = []
+        # Shift the remaining rows to overwrite "deleted" rows
+        for row_idx_to, row_idx_from in zip(row_idxs_affected, row_idxs_remain):
+            for col_id in self.col_ids:
+                cell_from = self.rows[row_idx_from][col_id.value]
+                cell_from.unlink()
+                cell_from.row = row_idx_to
+                self.rows[row_idx_to][col_id.value] = cell_from
+                affected_cells.append(cell_from)
+        # Set the last nth rows to new default cell as old cell has been "shifted"
+        num_shifted_rows = len(row_idxs_affected) - len(row_idxs_remain)
+        first_shifted_row_idx = row_idxs_affected[len(row_idxs_remain)]
+        for last_row_idx in [first_shifted_row_idx + i for i in range(num_shifted_rows)]:
+            for col_id in self.col_ids:
+                new_cell = Cell((last_row_idx, col_id.col))  # No worksheet needed for unlink cell
+                self.rows[last_row_idx][col_id.value] = new_cell
+                affected_cells.append(new_cell)
+        self._max_row -= len(row_idxs_to_delete)
+        return affected_cells
 
     def __len__(self):
         return self._max_row - 1
