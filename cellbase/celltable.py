@@ -280,23 +280,6 @@ class LocalCelltable(Celltable):
                 cells_in_row[col_id.value] = cell
             self.rows[row_idx] = cells_in_row
 
-    def safe_append(self, iterable, first_row=False):
-        """
-        Ensure new row appended on last row by setting worksheet._current_row,
-        while preserving the original value of worksheet._current_row.
-
-        .. note:: Set first_row to true to explicitly append to first row as worksheet.max_row always return 1
-
-        :param iterable: Columns of data to append
-        :param first_row: Explicitly append to first row
-        :type first_row: bool
-        """
-        orig_current_row = self.worksheet._current_row
-        # row_idx = worksheet._current_row + 1, see worksheet.append
-        self.worksheet._current_row = self.worksheet.max_row if not first_row else 0
-        self.worksheet.append(iterable)
-        self.worksheet._current_row = orig_current_row
-
     def query(self, where=None):
         rows_to_return = []
         for row_idx in self._row_and_col_where(where):
@@ -307,7 +290,7 @@ class LocalCelltable(Celltable):
         return rows_to_return
 
     def insert(self, value_in_dict):
-        self.safe_append({col_id.col_idx: value_in_dict[col_id.value] for col_id in self.col_ids})
+        self._safe_append({col_id.col_idx: value_in_dict[col_id.value] for col_id in self.col_ids})
         new_row_idx = self.worksheet.max_row
         self.rows[new_row_idx] = {}
         for col_id in self.col_ids:
@@ -329,37 +312,21 @@ class LocalCelltable(Celltable):
         )
 
     def delete(self, where=None):
-        row_idxs_where = self._row_and_col_where(where)
-        affected_row_count = len(row_idxs_where)
-        if affected_row_count is 0:
-            return
+        row_idxs_to_delete = self._row_and_col_where(where)
+        affected_row_count = len(row_idxs_to_delete)
+        if affected_row_count == 0:
+            return 0
         begin_max_row = self.worksheet.max_row  # max_row before delete
         # Pop row where condition matched
-        for row_idx in row_idxs_where:
+        for row_idx in row_idxs_to_delete:
             self.rows.pop(row_idx)
-        # Fill the gap, by changing key of rows starting from first popped row id
-        first_popped_row_id = min(row_idxs_where)
-        index_range = range(first_popped_row_id, begin_max_row + 1)  # +1 for range exclusive
-        rows_after_first_popped_row = list(self.rows.values())[
-                                      first_popped_row_id - 2:]  # -1 for col_id -1 for 0 indexed list
-        for new_row_idx, row in zip(index_range, rows_after_first_popped_row):
-            for col_id in self.col_ids:
-                row[col_id.value].row = new_row_idx
-            self.rows[new_row_idx] = row
-        # Pop the last nth rows as changing key of dict may left old entry remains
-        for last_row_idx in [begin_max_row - i for i in range(affected_row_count) if
-                             begin_max_row - i not in row_idxs_where]:
-            self.rows.pop(last_row_idx)
-        # Sort dict by key as changing of
-        # old key to empty(deleted) key may be treated as putting new entry
-        # while delete() highly dependant on the sequence
-        self.rows = collections.OrderedDict(sorted(self.rows.items()))
+        self._reorder_rows(row_idxs_to_delete, begin_max_row, affected_row_count)
         # Update cols as the reference of cell is broken &
         # coordinate of cells to worksheet as worksheet._cells is not OrderedDict
         for col_id in self.col_ids:
             self.cols[col_id.value].clear()
         self.worksheet._cells.clear()
-        self.safe_append({col_id.col_idx: col_id.value for col_id in self.col_ids}, first_row=True)  # Set col_ids
+        self._safe_append({col_id.col_idx: col_id.value for col_id in self.col_ids}, first_row=True)  # Set col_ids
         for row_idx in self.rows:
             for col_id in self.col_ids:
                 copied_cell = copy(self.rows[row_idx][col_id.value])
@@ -370,8 +337,8 @@ class LocalCelltable(Celltable):
     def traverse(self, fn, where=None, select=None):
         if callable(fn) is False:
             raise TypeError("Expected callable for argument fn(cell)")
-        row_idxs_where = self._row_idxs_where(where)
-        for row_idx in row_idxs_where:
+        row_idxs_to_traverse = self._row_idxs_where(where)
+        for row_idx in row_idxs_to_traverse:
             select = [col_id.value for col_id in self.col_ids] if select is None else select
             for matched_col_id in [col_id for col_id in self.col_ids if col_id.value in select]:
                 cell = self.rows[row_idx][matched_col_id.value]
@@ -379,12 +346,29 @@ class LocalCelltable(Celltable):
                 # Update value to worksheet
                 self.worksheet._cells[row_idx, matched_col_id.col_idx] = cell
                 # No need to update cols as it share same reference with row
-        return len(row_idxs_where)
+        return len(row_idxs_to_traverse)
 
     def format(self, formatter, where=None, select=None):
         if where is None and len(formatter) == 0:
             return 0
         return self.traverse(lambda cell: formatter.format(cell), where=where, select=select)
+
+    def _safe_append(self, iterable, first_row=False):
+        """
+        Ensure new row appended on last row by setting worksheet._current_row,
+        while preserving the original value of worksheet._current_row.
+
+        .. note:: Set first_row to true to explicitly append to first row as worksheet.max_row always return 1
+
+        :param iterable: Columns of data to append
+        :param first_row: Explicitly append to first row
+        :type first_row: bool
+        """
+        orig_current_row = self.worksheet._current_row
+        # row_idx = worksheet._current_row + 1, see worksheet.append
+        self.worksheet._current_row = self.worksheet.max_row if not first_row else 0
+        self.worksheet.append(iterable)
+        self.worksheet._current_row = orig_current_row
 
 
 class GoogleCelltable(Celltable):
@@ -402,27 +386,9 @@ class GoogleCelltable(Celltable):
                 cell = row[col_id.col - 1]  # -1 as row is list(0 indexed)
                 if cell.value and self._max_row != row_idx:
                     self._max_row = max(self._max_row, row_idx)
-                    self.cols[col_id.value].append(cell)
-                    cells_in_row[col_id.value] = cell
-                self.rows[row_idx] = cells_in_row
-
-    def update_max_row(self):
-        max_rows = []
-        for col_id in self.col_ids:
-            max_rows.append(max([cell.row for cell in self.cols[col_id.value] if cell.value]))
-        self._max_row = max(max_rows)
-        return self._max_row
-
-    def value_in_dict_to_row_value(self, value_in_dict):
-        """ Convert dictionary to list according the sequence of col_ids """
-        col_seqs = [col_id.col for col_id in self.col_ids]
-        values = []
-        for col_idx in range(1, self.col_ids[-1].col + 1):
-            if col_idx in col_seqs:
-                values.append(value_in_dict[self.col_ids[col_seqs.index(col_idx)].value])
-            else:
-                values.append('')
-        return values
+                self.cols[col_id.value].append(cell)
+                cells_in_row[col_id.value] = cell
+            self.rows[row_idx] = cells_in_row
 
     def query(self, where=None):
         rows_to_return = []
@@ -435,7 +401,7 @@ class GoogleCelltable(Celltable):
 
     def insert(self, value_in_dict):
         # TODO: Use update_cell if max_row < self.worksheet.rows
-        self.worksheet.insert_rows(self._max_row, values=self.value_in_dict_to_row_value(value_in_dict))
+        self.worksheet.insert_rows(self._max_row, values=self._value_in_dict_to_row_value(value_in_dict))
         self._max_row += 1
         new_row_idx = self._max_row
         self.rows[new_row_idx] = {}
@@ -469,9 +435,9 @@ class GoogleCelltable(Celltable):
     def traverse(self, fn, where=None, select=None):
         if callable(fn) is False:
             raise TypeError("Expected callable for argument fn(cell)")
-        row_idxs_where = self._row_idxs_where(where)
+        row_idxs_to_traverse = self._row_idxs_where(where)
         cells_to_update = []
-        for row_idx in row_idxs_where:
+        for row_idx in row_idxs_to_traverse:
             select = [col_id.value for col_id in self.col_ids] if select is None else select
             for matched_col_id in [col_id for col_id in self.col_ids if col_id.value in select]:
                 cell = self.rows[row_idx][matched_col_id.value]
@@ -480,17 +446,35 @@ class GoogleCelltable(Celltable):
                 cells_to_update.append(cell)
                 # No need to update cols as it share same reference with row
         self._update_cells_then_link(cells_to_update)
-        return len(row_idxs_where)
+        return len(row_idxs_to_traverse)
 
     def format(self, formatter, where=None, select=None):
         if where is None and len(formatter) == 0:
             return 0
         return self.traverse(lambda cell: formatter.format(cell), where=where, select=select)
 
+    def _update_max_row(self):
+        max_rows = []
+        for col_id in self.col_ids:
+            max_rows.append(max([cell.row for cell in self.cols[col_id.value] if cell.value]))
+        self._max_row = max(max_rows)
+        return self._max_row
+
     def _update_cells_then_link(self, cells):
         self.worksheet.update_cells(cells)
         for cell in cells:
             cell.link(self.worksheet)
+
+    def _value_in_dict_to_row_value(self, value_in_dict):
+        """ Convert dictionary to list according the sequence of col_ids """
+        col_seqs = [col_id.col for col_id in self.col_ids]
+        values = []
+        for col_idx in range(1, self.col_ids[-1].col + 1):
+            if col_idx in col_seqs:
+                values.append(value_in_dict[self.col_ids[col_seqs.index(col_idx)].value])
+            else:
+                values.append('')
+        return values
 
     def _pop_rows(self, row_idxs_to_delete):
         row_idxs_affected = list(range(row_idxs_to_delete[0], self._max_row + 1))
