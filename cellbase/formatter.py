@@ -56,16 +56,16 @@ class CellFormatter(ABC):
 
 
 class LocalCellFormatter(CellFormatter):
-    ATTRIBUTES = ['font', 'fill', 'border', 'number_format', 'protection', 'alignment', 'style']
+    ATTRIBUTES = ('font', 'fill', 'border', 'number_format', 'protection', 'alignment', 'style')
 
     def attrs(self):
         return LocalCellFormatter.ATTRIBUTES
 
 
 class GoogleCellFormatter(CellFormatter):
-    ATTRIBUTES = ['color', 'horizontal_alignment', 'vertical_alignment', 'wrap_strategy', 'note', 'set_text_format',
-                  'set_number_format', 'set_text_rotation']
-    METHODS = ['set_text_format', 'set_number_format', 'set_text_rotation']
+    ATTRIBUTES = ('color', 'horizontal_alignment', 'vertical_alignment', 'wrap_strategy', 'note', 'set_text_format',
+                  'set_number_format', 'set_text_rotation')
+    METHODS = ('set_text_format', 'set_number_format', 'set_text_rotation')
 
     def on_format(self, cell, attr):
         if attr in GoogleCellFormatter.METHODS:
