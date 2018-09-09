@@ -512,6 +512,7 @@ class GoogleCelltable(RemoteCelltable):
                 cell_from.unlink()
                 cell_from.row = row_idx_to
                 self.rows[row_idx_to][col_id.value] = cell_from
+                self.cols[col_id.value][row_idx_to - 2] = cell_from
                 affected_cells.append(cell_from)
         # Set the last nth rows to new default cell as old cell has been "shifted"
         num_shifted_rows = len(row_idxs_affected) - len(row_idxs_remain)
@@ -520,6 +521,7 @@ class GoogleCelltable(RemoteCelltable):
             for col_id in self.col_ids:
                 new_cell = Cell((last_row_idx, col_id.col))  # No worksheet needed for unlink cell
                 self.rows[last_row_idx][col_id.value] = new_cell
+                self.cols[col_id.value][last_row_idx - 2] = new_cell
                 affected_cells.append(new_cell)
         self._max_row -= len(row_idxs_to_delete)
         return affected_cells
