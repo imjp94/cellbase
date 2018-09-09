@@ -5,7 +5,7 @@ import pygsheets
 from openpyxl import Workbook, load_workbook
 from pygsheets import ExportType, SpreadsheetNotFound
 
-from cellbase.formatter import CellFormatter, LocalCellFormatter
+from cellbase.formatter import CellFormatter
 from cellbase.celltable import Celltable, LocalCelltable, GoogleCelltable
 
 
@@ -188,11 +188,7 @@ class Cellbase(ABC):
         self.create_if_none(worksheet_name)
         return self.celltables[worksheet_name].traverse(fn, where=where, select=select)
 
-    def format(self, worksheet_name, where=None, select=None,
-               formatter=None,
-               font=None, fill=None, border=None, number_format=None,
-               protection=None, alignment=None, style=None
-               ):
+    def format(self, worksheet_name, formatter, where=None, select=None):
         """
         Convenience method that built on top of traverse to format cell(s).
         If formatter is given, all other formats will be ignored.
@@ -206,35 +202,13 @@ class Cellbase(ABC):
             For example, ["id"], where only column under "id" will be formatted
         :type select: list
         :param formatter:
-            CellFormatter that hold all formats. When this is not None other formats will be ignored.
-        :type formatter: CellFormatter
-        :param font: Font of cell
-        :type font: openpyxl.styles.Font
-        :param fill: Fill cell with color
-        :type fill: openpyxl.styles.Fill
-        :param border: Border of cell
-        :type border: openpyxl.styles.Border
-        :param number_format: Number format of cell
-        :type number_format: str
-        :param protection: Protection of cell
-        :type protection: openpyxl.styles.Protection
-        :param alignment: Alignment of cell
-        :type alignment: openpyxl.styles.Alignment
-        :param style: Named style
-        :type style: str
+            CellFormatter or dict that hold all formats.
+        :type formatter: CellFormatter or dict
         :return: Number of rows formatted
         :rtype: int
         """
         self.create_if_none(worksheet_name)
-        if formatter is None:
-            formatter = LocalCellFormatter(
-                font=font, fill=fill, border=border,
-                number_format=number_format, protection=protection,
-                alignment=alignment, style=style
-            )
-        return self.celltables[worksheet_name].format(
-            formatter, where=where, select=select
-        )
+        return self.celltables[worksheet_name].format(formatter, where=where, select=select)
 
     def __len__(self):
         """

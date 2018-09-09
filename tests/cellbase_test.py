@@ -65,10 +65,8 @@ class CellbaseTest(unittest.TestCase):
             font=font, fill=fill, border=border,
             number_format=number_format, protection=protection,
             alignment=alignment)
-        self.dao.format({DAO.COL_ROW_IDX: simple_formatted.row_idx},
-                        font=font, fill=fill, border=border,
-                        number_format=number_format, protection=protection,
-                        alignment=alignment)
+        self.dao.format({'font': font, 'fill': fill, 'border': border, 'number_format': number_format,
+                         'protection': protection, 'alignment': alignment}, {DAO.COL_ROW_IDX: simple_formatted.row_idx})
         self.dao.traverse(lambda cell:
                           self.assertTrue(
                               is_all_format_match(cell, formatter)

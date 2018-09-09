@@ -98,12 +98,7 @@ class DAO:
         """
         return self.cellbase.traverse(self.worksheet_name(), fn, where=where, select=select)
 
-    def format(self, where=None, select=None,
-               formatter=None,
-               font=None, fill=None, border=None,
-               number_format=None, protection=None,
-               alignment=None, style=None
-               ):
+    def format(self, formatter, where=None, select=None):
         """
         Convenience method that built on top of traverse to format cell(s).
         If formatter is given, all other formats will be ignored.
@@ -115,32 +110,12 @@ class DAO:
             For example, ["id"], where only column under "id" will be formatted
         :type select: list
         :param formatter:
-            CellFormatter that hold all formats. When this is not None other formats will be ignored.
-        :type formatter: CellFormatter
-        :param font: Font of cell
-        :type font: openpyxl.styles.Font
-        :param fill: Fill cell with color
-        :type fill: openpyxl.styles.Fill
-        :param border: Border of cell
-        :type border: openpyxl.styles.Border
-        :param number_format: Number format of cell
-        :type number_format: str
-        :param protection: Protection of cell
-        :type protection: openpyxl.styles.Protection
-        :param alignment: Alignment of cell
-        :type alignment: openpyxl.styles.Alignment
-        :param style: Named style
-        :type style: str
+            CellFormatter or dict that hold all formats.
+        :type formatter: CellFormatter or dict
         :return: Number of rows formatted
         :rtype: int
         """
-        return self.cellbase.format(
-            self.worksheet_name(), where=where, select=select,
-            formatter=formatter,
-            font=font, fill=fill, border=border,
-            number_format=number_format, protection=protection,
-            alignment=alignment, style=style
-        )
+        return self.cellbase.format(self.worksheet_name(), formatter, where, select)
 
     def drop(self):
         """
