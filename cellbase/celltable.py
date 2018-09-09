@@ -371,26 +371,81 @@ class LocalCelltable(Celltable):
         self.worksheet._current_row = orig_current_row
 
 
-class GoogleCelltable(Celltable):
-    def __init__(self, worksheet):
+class RemoteCelltable(Celltable):
+    def __init__(self, worksheet, fetch=False):
         super().__init__(worksheet)
-        all_rows = self.worksheet.get_all_values('cell')
-        self.col_ids = [col_id for col_id in all_rows[0] if col_id.value]
-        self.cols = {col.value: [] for col in self.col_ids}
-        self.rows = collections.OrderedDict()
-        self._max_row = 1
-        for row in all_rows[1:]:
-            row_idx = row[0].row
-            cells_in_row = {}
-            for col_id in self.col_ids:
-                cell = row[col_id.col - 1]  # -1 as row is list(0 indexed)
-                if cell.value and self._max_row != row_idx:
-                    self._max_row = max(self._max_row, row_idx)
-                self.cols[col_id.value].append(cell)
-                cells_in_row[col_id.value] = cell
-            self.rows[row_idx] = cells_in_row
+        self._has_fetched = False
+        if fetch:
+            self.fetch()
+
+    def fetch(self):
+        self._on_fetch()
+        self._has_fetched = True
+
+    @abstractmethod
+    def _on_fetch(self):
+        pass
 
     def query(self, where=None):
+        if not self._has_fetched:
+            self.fetch()
+        self._on_query(where)
+
+    def insert(self, value_in_dict):
+        if not self._has_fetched:
+            self.fetch()
+        self.insert(value_in_dict)
+
+    def update(self, value_in_dict, where=None):
+        if not self._has_fetched:
+            self.fetch()
+        self.update(value_in_dict, where)
+
+    def delete(self, where=None):
+        if not self._has_fetched:
+            self.fetch()
+        self._on_delete(where)
+
+    def traverse(self, fn, where=None, select=None):
+        if not self._has_fetched:
+            self.fetch()
+        self._on_traverse(fn, where, select)
+
+    def format(self, formatter, where=None, select=None):
+        if not self._has_fetched:
+            self.fetch()
+        self._on_format(formatter, where, select)
+
+    @abstractmethod
+    def _on_query(self, where=None):
+        pass
+
+    @abstractmethod
+    def _on_insert(self, value_in_dict):
+        pass
+
+    @abstractmethod
+    def _on_update(self, value_in_dict, where=None):
+        pass
+
+    @abstractmethod
+    def _on_delete(self, where=None):
+        pass
+
+    @abstractmethod
+    def _on_traverse(self, fn, where=None, select=None):
+        pass
+
+    @abstractmethod
+    def _on_format(self, formatter, where=None, select=None):
+        pass
+
+
+class GoogleCelltable(RemoteCelltable):
+    def __init__(self, worksheet, fetch=False):
+        super().__init__(worksheet, fetch)
+
+    def _on_query(self, where=None):
         rows_to_return = []
         for row_idx in self._row_and_col_where(where):
             values = {DAO.COL_ROW_IDX: row_idx}
@@ -399,7 +454,7 @@ class GoogleCelltable(Celltable):
             rows_to_return.append(values)
         return rows_to_return
 
-    def insert(self, value_in_dict):
+    def _on_insert(self, value_in_dict):
         # TODO: Use update_cell if max_row < self.worksheet.rows
         self.worksheet.insert_rows(self._max_row, values=self._value_in_dict_to_row_value(value_in_dict))
         self._max_row += 1
@@ -412,7 +467,7 @@ class GoogleCelltable(Celltable):
             self.cols[col_id.value].append(new_cell)
         return new_row_idx
 
-    def update(self, value_in_dict, where=None):
+    def _on_update(self, value_in_dict, where=None):
         if where is None:
             row = self.rows[value_in_dict[DAO.COL_ROW_IDX]]
             for cell in list(row.values())[1:]:
@@ -424,7 +479,7 @@ class GoogleCelltable(Celltable):
             select=[col_id.value for col_id in self.col_ids if col_id.value in value_in_dict]
         )
 
-    def delete(self, where=None):
+    def _on_delete(self, where=None):
         row_idxs_to_delete = self._row_and_col_where(where)
         deleted_row_count = len(row_idxs_to_delete)
         if deleted_row_count == 0:
@@ -432,7 +487,7 @@ class GoogleCelltable(Celltable):
         self._update_cells_then_link(self._pop_rows(row_idxs_to_delete))
         return deleted_row_count
 
-    def traverse(self, fn, where=None, select=None):
+    def _on_traverse(self, fn, where=None, select=None):
         if callable(fn) is False:
             raise TypeError("Expected callable for argument fn(cell)")
         row_idxs_to_traverse = self._row_idxs_where(where)
@@ -448,17 +503,27 @@ class GoogleCelltable(Celltable):
         self._update_cells_then_link(cells_to_update)
         return len(row_idxs_to_traverse)
 
-    def format(self, formatter, where=None, select=None):
+    def _on_format(self, formatter, where=None, select=None):
         if where is None and len(formatter) == 0:
             return 0
         return self.traverse(lambda cell: formatter.format(cell), where=where, select=select)
 
-    def _update_max_row(self):
-        max_rows = []
-        for col_id in self.col_ids:
-            max_rows.append(max([cell.row for cell in self.cols[col_id.value] if cell.value]))
-        self._max_row = max(max_rows)
-        return self._max_row
+    def _on_fetch(self):
+        all_rows = self.worksheet.get_all_values('cell')
+        self.col_ids = [col_id for col_id in all_rows[0] if col_id.value]
+        self.cols = {col.value: [] for col in self.col_ids}
+        self.rows = collections.OrderedDict()
+        self._max_row = 1
+        for row in all_rows[1:]:
+            row_idx = row[0].row
+            cells_in_row = {}
+            for col_id in self.col_ids:
+                cell = row[col_id.col - 1]  # -1 as row is list(0 indexed)
+                if cell.value and self._max_row != row_idx:
+                    self._max_row = max(self._max_row, row_idx)
+                self.cols[col_id.value].append(cell)
+                cells_in_row[col_id.value] = cell
+            self.rows[row_idx] = cells_in_row
 
     def _update_cells_then_link(self, cells):
         self.worksheet.update_cells(cells)

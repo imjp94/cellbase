@@ -341,7 +341,7 @@ class GoogleCellbase(Cellbase):
         except SpreadsheetNotFound:
             self.workbook = client.create(filename, template, on_create_folder or 'root')
         for worksheet in self.workbook.worksheets():
-            self.celltables[worksheet.title] = GoogleCelltable(worksheet)
+            self.celltables[worksheet.title] = GoogleCelltable(worksheet, worksheet.title in self.on_create)
         return self
 
     def remove_empty_cols(self, worksheet_name):
