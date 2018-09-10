@@ -1,7 +1,5 @@
-import collections
 import warnings
 from abc import ABC, abstractmethod
-from copy import copy
 
 from pygsheets import Cell
 
@@ -11,16 +9,16 @@ from cellbase.helper import DAO
 
 class Celltable(ABC):
     """
-    Celltable is equivalent to :class:`openpyxl.worksheet.Worksheet` which store the :class:`openpyxl.cell.Cell`
+    Celltable is equivalent to Worksheet from Workbook
     """
     DEFAULT_CELL_ATTRS = {'value': 'value', 'row': 'row', 'col': 'col'}
 
     def __init__(self, worksheet):
         self.worksheet = worksheet
-        self.rows = collections.OrderedDict()
+        self.rows = {}
         self.cols = {}
         self.col_ids = []
-        # TODO: Add self._max_row
+        self._max_row = 0
 
     def query(self, where=None):
         """
@@ -48,8 +46,18 @@ class Celltable(ABC):
         :return: New row index
         :rtype: int
         """
-        # TODO: Use self._max_row as new row index
-        return self._on_insert(value_in_dict)
+        if not isinstance(value_in_dict, dict):
+            raise TypeError("Expecting dict given %s" % type(value_in_dict))
+        new_row_idx = self._max_row + 2  # +2 = +1 as _max_row is size and +1 for new row
+        new_row = self._on_insert(value_in_dict, new_row_idx)
+        self.rows[new_row_idx] = {}
+        for col_id in self.col_ids:
+            new_cell = new_row[self._get_cell(col_id, 'col') - 1]
+            col_id_value = self._get_cell(col_id, 'value')
+            self.rows[new_row_idx][col_id_value] = new_cell
+            self.cols[col_id_value].append(new_cell)
+        self._max_row += 1
+        return new_row_idx
 
     def update(self, value_in_dict, where=None):
         """
@@ -62,7 +70,10 @@ class Celltable(ABC):
         :rtype: int
         """
         if where is None:
-            row = self.rows[value_in_dict[DAO.COL_ROW_IDX]]
+            try:
+                row = self.rows[value_in_dict[DAO.COL_ROW_IDX]]
+            except KeyError:
+                raise ValueError("row_idx not found, it must be provided if 'where' is omitted")
             for cell in list(row.values())[1:]:
                 self._set_cell(cell, 'value', value_in_dict[self._col_idx_to_col_id(self._get_cell(cell, 'col')).value])
             return 1
@@ -81,15 +92,19 @@ class Celltable(ABC):
         :rtype:int
         """
         row_idxs_to_delete = self._row_and_col_where(where)
-        self._on_delete(self._row_and_col_where(where))
-        return len(row_idxs_to_delete)
+        num_rows_deleted = len(row_idxs_to_delete)
+        if num_rows_deleted == 0:
+            return 0
+        self._on_delete(*self._pop_rows(row_idxs_to_delete))
+        self._max_row -= num_rows_deleted
+        return num_rows_deleted
 
     def traverse(self, fn, where=None, select=None):
         """
         Access cells directly from rows where condition match
 
         :param fn:
-            function(:class:`openpyxl.cell.Cell`) to allow accessing the cell.
+            function(cell) to allow accessing the cell.
             For example, lambda cell: cell.fill = PatternFill(fill_type="solid", fgColor="00FFFF00").
         :param where: dict of columns id to inspect. For example, {'id': 1, 'name': 'jp'}.
         :type where: dict
@@ -100,10 +115,21 @@ class Celltable(ABC):
         :return: Number of rows traversed
         :rtype: int
         """
+        if not callable(fn):
+            raise TypeError("Expected callable for argument fn(cell)")
         row_idxs_to_traverse = self._row_idxs_where(where)
+        num_rows_traversed = len(row_idxs_to_traverse)
+        if num_rows_traversed == 0:
+            return 0
         select = [self._get_cell(col_id, 'value') for col_id in self.col_ids] if select is None else select
-        self._on_traverse(fn, row_idxs_to_traverse, select)
-        return len(row_idxs_to_traverse)
+        traversed_cells = []
+        for row_idx in row_idxs_to_traverse:
+            for matched_col_id in [col_id for col_id in self.col_ids if col_id.value in select]:
+                cell = self.rows[row_idx][matched_col_id.value]
+                fn(cell)
+                traversed_cells.append(cell)
+        self._on_traverse(traversed_cells)
+        return num_rows_traversed
 
     def format(self, formatter, where=None, select=None):
         """
@@ -122,26 +148,44 @@ class Celltable(ABC):
         :return: Number of rows formatted
         :rtype: int
         """
-        if where is None and len(formatter) == 0:
+        if len(formatter) == 0:
             return 0
         formatter = self._formatter_cls()(**formatter) if isinstance(formatter, dict) else formatter
         return self.traverse(lambda cell: formatter.format(cell), where=where, select=select)
 
     @abstractmethod
-    def _on_insert(self, value_in_dict):
+    def _on_insert(self, value_in_dict, new_row_idx):
         pass
 
     @abstractmethod
-    def _on_delete(self, row_idxs):
+    def _on_delete(self, shifted_cells, popped_cells):
         pass
 
     @abstractmethod
-    def _on_traverse(self, fn, row_idxs, select):
+    def _on_traverse(self, cells):
         pass
 
     @abstractmethod
     def _formatter_cls(self):
         pass
+
+    def _parse(self, first_row, content_row, on_parse_cell=None):
+        self.col_ids = [col_id for col_id in first_row if self._get_cell(col_id, 'value')]  # Ignore cols with no value
+        self.cols = {self._get_cell(col_id, 'value'): [] for col_id in self.col_ids}
+        for row in content_row:
+            row_idx = self._get_cell(row[0], 'row')
+            for col_id in self.col_ids:
+                cell = row[self._get_cell(col_id, 'col') - 1]  # -1 as row is list(0 indexed)
+                if self._get_cell(cell, 'value'):
+                    if self._max_row < row_idx:
+                        self._max_row = row_idx - 1
+                    if on_parse_cell:
+                        on_parse_cell(cell)
+                    col_id_value = self._get_cell(col_id, 'value')
+                    self.cols[col_id_value].append(cell)
+                    if row_idx not in self.rows:
+                        self.rows[row_idx] = {}
+                    self.rows[row_idx][col_id_value] = cell
 
     def _cell_attrs(self):
         return Celltable.DEFAULT_CELL_ATTRS
@@ -152,6 +196,31 @@ class Celltable(ABC):
     def _set_cell(self, cell, attr, value):
         setattr(cell, self._cell_attrs()[attr], value)
 
+    def _pop_rows(self, row_idxs):
+        # +2 = +1 as max_row is size and +1 for range exclusive
+        row_idxs_affected = list(range(row_idxs[0], self._max_row + 2))
+        row_idxs_remain = [row_idx for row_idx in row_idxs_affected if row_idx not in row_idxs]
+        shifted_cells = []
+        popped_cells = []
+        for row_idx in row_idxs_affected:
+            if row_idxs_remain:
+                row_idx_remain = row_idxs_remain.pop(0)
+                # Shift cell to overwrite "deleted" cell
+                for col_id in self.col_ids:
+                    col_id_value = self._get_cell(col_id, 'value')
+                    cell = self.rows[row_idx_remain][col_id_value]
+                    self._set_cell(cell, 'row', row_idx)
+                    self.rows[row_idx][col_id_value] = cell
+                    self.cols[col_id_value][row_idx - 2] = cell
+                    shifted_cells.append(cell)
+            else:
+                # Pop cell that already shifted and left to be empty
+                del self.rows[row_idx]
+                for col_id in self.col_ids:
+                    cell = self.cols[self._get_cell(col_id, 'value')].pop()
+                    popped_cells.append(cell)
+        return shifted_cells, popped_cells
+
     def _col_idx_to_col_id(self, col_idx):
         """
         Get column id cell with column index
@@ -159,7 +228,6 @@ class Celltable(ABC):
         :param col_idx: Column index
         :type col_idx: int
         :return: Column id cell
-        :rtype: openpyxl.cell.Cell
         """
         return self.col_ids[col_idx - 1]
 
@@ -243,7 +311,7 @@ class Celltable(ABC):
         """
         :return: Length of rows doesn't include header
         """
-        return len(self.rows)
+        return self._max_row
 
     def __getitem__(self, row_idx):
         """
@@ -295,102 +363,31 @@ class LocalCelltable(Celltable):
 
     def __init__(self, worksheet):
         super().__init__(worksheet)
-        self.col_ids = [col_id for col_id in worksheet[1]
-                        if col_id.value is not None]
-        self.cols = {col.value: [] for col in self.col_ids}
-        self.rows = collections.OrderedDict()
-        for row in worksheet.iter_rows(min_row=2):
-            row_idx = row[0].row
-            cells_in_row = {}
-            for col_id in self.col_ids:
-                cell = row[col_id.col_idx - 1]  # -1 as row is list(0 indexed)
-                self.cols[col_id.value].append(cell)
-                cells_in_row[col_id.value] = cell
-            self.rows[row_idx] = cells_in_row
+        self._parse(worksheet[1], worksheet.iter_rows(min_row=2))
 
-    def _on_insert(self, value_in_dict):
-        self._safe_append({col_id.col_idx: value_in_dict[col_id.value] for col_id in self.col_ids})
-        new_row_idx = self.worksheet.max_row
-        self.rows[new_row_idx] = {}
-        for col_id in self.col_ids:
-            new_cell = self.worksheet._cells[new_row_idx, col_id.col_idx]
-            self.rows[new_row_idx][col_id.value] = new_cell
-            self.cols[col_id.value].append(new_cell)
-        return new_row_idx
+    def _on_insert(self, value_in_dict, new_row_idx):
+        # Make sure openpyxl actualy append at last row
+        orig_current_row = self.worksheet._current_row
+        self.worksheet._current_row = self._max_row + 1  # row_idx = worksheet._current_row + 1, see worksheet.append
+        self.worksheet.append({col_id.col_idx: value_in_dict[col_id.value] for col_id in self.col_ids})
+        self.worksheet._current_row = orig_current_row
+        return list(self.worksheet.rows)[new_row_idx - 1]
 
-    def _on_delete(self, row_idxs):
-        deleted_row_count = len(row_idxs)
-        if deleted_row_count == 0:
-            return
-        self._pop_rows(row_idxs)
-        # Update cols as the reference of cell is broken &
-        # coordinate of cells to worksheet as worksheet._cells is not OrderedDict
-        for col_id in self.col_ids:
-            self.cols[col_id.value].clear()
-        self.worksheet._cells.clear()
-        self._safe_append({col_id.col_idx: col_id.value for col_id in self.col_ids}, first_row=True)  # Set col_ids
-        for row_idx in self.rows:
-            for col_id in self.col_ids:
-                copied_cell = copy(self.rows[row_idx][col_id.value])
-                self.worksheet._cells[row_idx, col_id.col_idx] = copied_cell
-                self.cols[col_id.value].append(copied_cell)
+    def _on_delete(self, shifted_cells, popped_cells):
+        for cell in shifted_cells:
+            self.worksheet._cells[(cell.row, cell.col_idx)] = self.rows[cell.row][self._col_idx_to_col_id(cell.col_idx).value]
+        for cell in popped_cells:
+            del self.worksheet._cells[(cell.row, cell.col_idx)]
 
-    def _on_traverse(self, fn, row_idxs, select):
-        if callable(fn) is False:
-            raise TypeError("Expected callable for argument fn(cell)")
-        for row_idx in row_idxs:
-            for matched_col_id in [col_id for col_id in self.col_ids if col_id.value in select]:
-                cell = self.rows[row_idx][matched_col_id.value]
-                fn(cell)  # Expect callable to modify cell
-                # Update value to worksheet
-                self.worksheet._cells[row_idx, matched_col_id.col_idx] = cell
-                # No need to update cols as it share same reference with row
+    def _on_traverse(self, cells):
+        for cell in cells:
+            self.worksheet._cells[cell.row, cell.col_idx] = cell
 
     def _formatter_cls(self):
         return LocalCellFormatter
 
     def _cell_attrs(self):
         return LocalCelltable.LOCAL_CELL_ATTRS
-
-    def _pop_rows(self, row_idxs):
-        max_row = self.worksheet.max_row
-        for row_idx in row_idxs:
-            self.rows.pop(row_idx)
-        # Fill the gap, by changing key of rows starting from first popped row id
-        first_popped_row_id = min(row_idxs)
-        index_range = range(first_popped_row_id, max_row + 1)  # +1 for range exclusive
-        rows_after_first_popped_row = list(self.rows.values())[
-                                      first_popped_row_id - 2:]  # -1 for col_id -1 for 0 indexed list
-        for new_row_idx, row in zip(index_range, rows_after_first_popped_row):
-            for col_id in self.col_ids:
-                cell = row[self._get_cell(col_id, 'value')]
-                self._set_cell(cell, 'row', new_row_idx)
-            self.rows[new_row_idx] = row
-        # Pop the last nth rows as changing key of dict may left old entry remains
-        for last_row_idx in [max_row - i for i in range(len(row_idxs)) if
-                             max_row - i not in row_idxs]:
-            self.rows.pop(last_row_idx)
-        # Sort dict by key as changing of
-        # old key to empty(deleted) key may be treated as putting new entry
-        # while delete() highly dependant on the sequence
-        self.rows = collections.OrderedDict(sorted(self.rows.items()))
-
-    def _safe_append(self, iterable, first_row=False):
-        """
-        Ensure new row appended on last row by setting worksheet._current_row,
-        while preserving the original value of worksheet._current_row.
-
-        .. note:: Set first_row to true to explicitly append to first row as worksheet.max_row always return 1
-
-        :param iterable: Columns of data to append
-        :param first_row: Explicitly append to first row
-        :type first_row: bool
-        """
-        orig_current_row = self.worksheet._current_row
-        # row_idx = worksheet._current_row + 1, see worksheet.append
-        self.worksheet._current_row = self.worksheet.max_row if not first_row else 0
-        self.worksheet.append(iterable)
-        self.worksheet._current_row = orig_current_row
 
 
 class RemoteCelltable(Celltable):
@@ -411,84 +408,52 @@ class RemoteCelltable(Celltable):
     def query(self, where=None):
         if not self._has_fetched:
             self.fetch()
-        super().query(where)
+        return super().query(where)
 
     def insert(self, value_in_dict):
         if not self._has_fetched:
             self.fetch()
-        super().insert(value_in_dict)
+        return super().insert(value_in_dict)
 
     def delete(self, where=None):
         if not self._has_fetched:
             self.fetch()
-        super().delete(where)
+        return super().delete(where)
 
     def traverse(self, fn, where=None, select=None):
         if not self._has_fetched:
             self.fetch()
-        super().traverse(fn, where, select)
+        return super().traverse(fn, where, select)
 
 
 class GoogleCelltable(RemoteCelltable):
     def __init__(self, worksheet, fetch=False):
         super().__init__(worksheet, fetch)
 
-    def _on_insert(self, value_in_dict):
-        # TODO: Use update_cell if max_row < self.worksheet.rows
-        self.worksheet.insert_rows(self._max_row, values=self._value_in_dict_to_row_value(value_in_dict))
-        self._max_row += 1
-        new_row_idx = self._max_row
-        self.rows[new_row_idx] = {}
-        new_row = self.worksheet.get_row(new_row_idx, 'cell')
-        for col_id in self.col_ids:
-            new_cell = new_row[col_id.col - 1]
-            self.rows[new_row_idx][col_id.value] = new_cell
-            self.cols[col_id.value].append(new_cell)
-        return new_row_idx
+    def _on_insert(self, value_in_dict, new_row_idx):
+        values = self._value_in_dict_to_row_value(value_in_dict)
+        if self.worksheet.rows - 1 > self._max_row:
+            self.worksheet.update_row(new_row_idx, values)
+        else:
+            # new_row_idx - 1 as it is inserted below the target row index
+            self.worksheet.insert_rows(new_row_idx - 1, values=values)
+        return self.worksheet.get_row(new_row_idx, 'cell')
 
-    def _on_delete(self, row_idxs):
-        deleted_row_count = len(row_idxs)
-        if deleted_row_count == 0:
-            return 0
-        self._update_cells_then_link(self._pop_rows(row_idxs))
+    def _on_delete(self, shifted_cells, popped_cells):
+        new_cells = []
+        for cell in popped_cells:
+            new_cells.append(Cell((cell.row, cell.col)))
+        self.worksheet.update_cells(shifted_cells + new_cells)
 
-    def _on_traverse(self, fn, row_idxs, select):
-        if callable(fn) is False:
-            raise TypeError("Expected callable for argument fn(cell)")
-        cells_to_update = []
-        for row_idx in row_idxs:
-            for matched_col_id in [col_id for col_id in self.col_ids if col_id.value in select]:
-                cell = self.rows[row_idx][matched_col_id.value]
-                cell.unlink()
-                fn(cell)  # Expect callable to modify cell
-                cells_to_update.append(cell)
-                # No need to update cols as it share same reference with row
-        self._update_cells_then_link(cells_to_update)
+    def _on_traverse(self, cells):
+        self.worksheet.update_cells(cells)
 
     def _on_fetch(self):
         all_rows = self.worksheet.get_all_values('cell')
-        self.col_ids = [col_id for col_id in all_rows[0] if col_id.value]
-        self.cols = {col.value: [] for col in self.col_ids}
-        self.rows = collections.OrderedDict()
-        self._max_row = 1
-        for row in all_rows[1:]:
-            row_idx = row[0].row
-            cells_in_row = {}
-            for col_id in self.col_ids:
-                cell = row[col_id.col - 1]  # -1 as row is list(0 indexed)
-                if cell.value and self._max_row != row_idx:
-                    self._max_row = max(self._max_row, row_idx)
-                self.cols[col_id.value].append(cell)
-                cells_in_row[col_id.value] = cell
-            self.rows[row_idx] = cells_in_row
+        self._parse(all_rows[0], all_rows[1:], lambda cell: cell.unlink())
 
     def _formatter_cls(self):
         return GoogleCellFormatter
-
-    def _update_cells_then_link(self, cells):
-        self.worksheet.update_cells(cells)
-        for cell in cells:
-            cell.link(self.worksheet)
 
     def _value_in_dict_to_row_value(self, value_in_dict):
         """ Convert dictionary to list according the sequence of col_ids """
@@ -500,31 +465,3 @@ class GoogleCelltable(RemoteCelltable):
             else:
                 values.append('')
         return values
-
-    def _pop_rows(self, row_idxs_to_delete):
-        row_idxs_affected = list(range(row_idxs_to_delete[0], self._max_row + 1))
-        row_idxs_remain = [row_idx for row_idx in row_idxs_affected if row_idx not in row_idxs_to_delete]
-        affected_cells = []
-        # Shift the remaining rows to overwrite "deleted" rows
-        for row_idx_to, row_idx_from in zip(row_idxs_affected, row_idxs_remain):
-            for col_id in self.col_ids:
-                cell_from = self.rows[row_idx_from][col_id.value]
-                cell_from.unlink()
-                cell_from.row = row_idx_to
-                self.rows[row_idx_to][col_id.value] = cell_from
-                self.cols[col_id.value][row_idx_to - 2] = cell_from
-                affected_cells.append(cell_from)
-        # Set the last nth rows to new default cell as old cell has been "shifted"
-        num_shifted_rows = len(row_idxs_affected) - len(row_idxs_remain)
-        first_shifted_row_idx = row_idxs_affected[len(row_idxs_remain)]
-        for last_row_idx in [first_shifted_row_idx + i for i in range(num_shifted_rows)]:
-            for col_id in self.col_ids:
-                new_cell = Cell((last_row_idx, col_id.col))  # No worksheet needed for unlink cell
-                self.rows[last_row_idx][col_id.value] = new_cell
-                self.cols[col_id.value][last_row_idx - 2] = new_cell
-                affected_cells.append(new_cell)
-        self._max_row -= len(row_idxs_to_delete)
-        return affected_cells
-
-    def __len__(self):
-        return self._max_row - 1
