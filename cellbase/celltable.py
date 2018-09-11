@@ -21,11 +21,15 @@ class Celltable(ABC):
         self._size = 0
 
     @property
+    def col_names(self):
+        return (self._get_cell(col_id, 'value') for col_id in self._col_ids)
+
+    @property
     def size(self):
         return self._size
 
     @property
-    def last_row(self):
+    def last_row_idx(self):
         return self._size + 1
 
     def query(self, where=None):
@@ -56,14 +60,14 @@ class Celltable(ABC):
         """
         if not isinstance(value_in_dict, dict):
             raise TypeError("Expecting dict given %s" % type(value_in_dict))
-        new_row_idx = self.last_row + 1
+        new_row_idx = self.last_row_idx + 1
         new_row = self._on_insert(value_in_dict, new_row_idx)
         self._rows[new_row_idx] = {}
         for col_id in self._col_ids:
-            new_cell = new_row[self._get_cell(col_id, 'col') - 1]
-            col_id_value = self._get_cell(col_id, 'value')
-            self._rows[new_row_idx][col_id_value] = new_cell
-            self._cols[col_id_value].append(new_cell)
+            new_cell = new_row[self._get_col_idx(col_id) - 1]
+            col_name = self._get_col_name(col_id)
+            self._set_row_cell(new_row_idx, col_name, new_cell)
+            self._cols[col_name].append(new_cell)
         self._size += 1
         return new_row_idx
 
@@ -77,17 +81,14 @@ class Celltable(ABC):
         :return: Number of rows updated
         :rtype: int
         """
-        if where is None:
+        if not where:
             try:
-                row = self._rows[value_in_dict[DAO.COL_ROW_IDX]]
+                where = {DAO.COL_ROW_IDX: value_in_dict[DAO.COL_ROW_IDX]}
             except KeyError:
-                raise ValueError("row_idx not found, it must be provided if 'where' is omitted")
-            for cell in list(row.values())[1:]:
-                self._set_cell(cell, 'value', value_in_dict[self._col_idx_to_col_id(self._get_cell(cell, 'col')).value])
-            return 1
+                raise KeyError("row_idx not found, it must be provided if 'where' is omitted")
         return self.traverse(
             lambda cell: self._set_cell(
-                cell, 'value', value_in_dict[self._col_idx_to_col_id(self._get_cell(cell, 'col')).value]), where
+                cell, 'value', value_in_dict[self._get_col_name(cell)]), where
         )
 
     def delete(self, where=None):
@@ -125,15 +126,15 @@ class Celltable(ABC):
         """
         if not callable(fn):
             raise TypeError("Expected callable for argument fn(cell)")
-        row_idxs_to_traverse = self._row_idxs_where(where)
+        row_idxs_to_traverse = self._row_and_col_where(where)
         num_rows_traversed = len(row_idxs_to_traverse)
         if num_rows_traversed == 0:
             return 0
-        select = [self._get_cell(col_id, 'value') for col_id in self._col_ids] if select is None else select
+        select = select or list(self.col_names)
         traversed_cells = []
         for row_idx in row_idxs_to_traverse:
-            for matched_col_id in [col_id for col_id in self._col_ids if col_id.value in select]:
-                cell = self._rows[row_idx][matched_col_id.value]
+            for col_name in [col_name for col_name in self.col_names if col_name in select]:
+                cell = self._get_row_cell(row_idx, col_name)
                 fn(cell)
                 traversed_cells.append(cell)
         self._on_traverse(traversed_cells)
@@ -179,34 +180,25 @@ class Celltable(ABC):
 
     def _parse(self, first_row, content_row, on_parse_cell=None):
         self._col_ids = [col_id for col_id in first_row if self._get_cell(col_id, 'value')]  # Ignore cols with no value
-        self._cols = {self._get_cell(col_id, 'value'): [] for col_id in self._col_ids}
+        self._cols = {col_name: [] for col_name in self.col_names}
         for row in content_row:
             row_idx = self._get_cell(row[0], 'row')
             for col_id in self._col_ids:
-                cell = row[self._get_cell(col_id, 'col') - 1]  # -1 as row is list(0 indexed)
+                cell = row[self._get_col_idx(col_id) - 1]  # -1 as row is list(0 indexed)
                 if self._get_cell(cell, 'value'):
                     if self._size < row_idx:
                         self._size = row_idx - 1
                     if on_parse_cell:
                         on_parse_cell(cell)
-                    col_id_value = self._get_cell(col_id, 'value')
-                    self._cols[col_id_value].append(cell)
+                    col_name = self._get_col_name(col_id)
+                    self._cols[col_name].append(cell)
                     if row_idx not in self._rows:
                         self._rows[row_idx] = {}
-                    self._rows[row_idx][col_id_value] = cell
-
-    def _cell_attrs(self):
-        return Celltable.DEFAULT_CELL_ATTRS
-
-    def _get_cell(self, cell, attr):
-        return getattr(cell, self._cell_attrs()[attr])
-
-    def _set_cell(self, cell, attr, value):
-        setattr(cell, self._cell_attrs()[attr], value)
+                    self._set_row_cell(row_idx, col_name, cell)
 
     def _pop_rows(self, row_idxs):
         # +1 for range exclusive
-        row_idxs_affected = list(range(row_idxs[0], self.last_row + 1))
+        row_idxs_affected = list(range(row_idxs[0], self.last_row_idx + 1))
         row_idxs_remain = [row_idx for row_idx in row_idxs_affected if row_idx not in row_idxs]
         shifted_cells = []
         popped_cells = []
@@ -214,40 +206,22 @@ class Celltable(ABC):
             if row_idxs_remain:
                 row_idx_remain = row_idxs_remain.pop(0)
                 # Shift cell to overwrite "deleted" cell
-                for col_id in self._col_ids:
-                    col_id_value = self._get_cell(col_id, 'value')
-                    cell = self._rows[row_idx_remain][col_id_value]
+                for col_name in self.col_names:
+                    cell = self._get_row_cell(row_idx_remain, col_name)
                     self._set_cell(cell, 'row', row_idx)
-                    self._rows[row_idx][col_id_value] = cell
-                    self._cols[col_id_value][row_idx - 2] = cell
+                    self._set_row_cell(row_idx, col_name, cell)
+                    self._set_col_cell(col_name, row_idx, cell)
                     shifted_cells.append(cell)
             else:
                 # Pop cell that already shifted and left to be empty
                 del self._rows[row_idx]
-                for col_id in self._col_ids:
-                    cell = self._cols[self._get_cell(col_id, 'value')].pop()
+                for col_name in self.col_names:
+                    cell = self._cols[col_name].pop()
                     popped_cells.append(cell)
         return shifted_cells, popped_cells
 
-    def _col_idx_to_col_id(self, col_idx):
-        """
-        Get column id cell with column index
-
-        :param col_idx: Column index
-        :type col_idx: int
-        :return: Column id cell
-        """
-        return self._col_ids[col_idx - 1]
-
     def _row_idxs_where(self, where=None):
-        """
-        Find the row indexes where any of the conditions match
-
-        :param where: dict of columns id to inspect. For example, {'id': 1, 'name': 'jp'}.
-        :type where: dict
-        :return: Row indexes where conditions match
-        :rtype: list
-        """
+        """ Find the row indexes where any of the conditions match """
         if where is None:
             return [row_idx for row_idx in self._rows]
         row_idxs = []
@@ -265,47 +239,30 @@ class Celltable(ABC):
             if col_name == DAO.COL_ROW_IDX:
                 continue
             for cell in self._cols[col_name]:
-                row = self._get_cell(cell, 'row')
+                row_idx = self._get_cell(cell, 'row')
                 value = self._get_cell(cell, 'value')
-                if row not in row_idxs and cond(value) if callable(cond) else value == cond:
-                    row_idxs.append(row)
-
+                if row_idx not in row_idxs and cond(value) if callable(cond) else value == cond:
+                    row_idxs.append(row_idx)
         return row_idxs
 
     def _col_names_where(self, row_idx, where=None):
-        """
-        Find the column names where conditions match from a specific row
-
-        :param row_idx: Row index to inspect
-        :type row_idx: int
-        :param where: dict of columns id to inspect. For example, {'id': 1, 'name': 'jp'}.
-        :type where: dict
-        :return: Column id cell values where condition match
-        :rtype: list
-        """
+        """ Find the column names where conditions match from a specific row """
         if where is None:
-            return [col_name for col_name in self._cols]
+            return list(self.col_names)
         col_names = []
         for col_name, cond in where.items():
             if col_name == DAO.COL_ROW_IDX:
                 if cond(row_idx) if callable(cond) else row_idx == int(cond):
                     col_names.append(col_name)
                 continue
-            cell = self._rows[row_idx][col_name]
+            cell = self._get_row_cell(row_idx, col_name)
             value = self._get_cell(cell, 'value')
             if cond(value) if callable(cond) else value == cond:
                 col_names.append(col_name)
         return col_names
 
     def _row_and_col_where(self, where=None):
-        """
-        Find row indexes where all conditions match by combining row_idx_where and col_names_where
-
-        :param where: dict of columns id to inspect. For example, {'id': 1, 'name': 'jp'}.
-        :type where: dict
-        :return: Row indexes where all conditions match
-        :rtype: list
-        """
+        """ Find row indexes where all conditions match by combining row_idx_where and col_names_where """
         row_idxs_where = self._row_idxs_where(where)
         if where is None:
             return row_idxs_where
@@ -315,29 +272,55 @@ class Celltable(ABC):
                 row_idxs.append(row_idx)
         return row_idxs
 
+    def _get_row_cell(self, row_idx, col_name):
+        return self._rows[row_idx][col_name]
+
+    def _set_row_cell(self, row_idx, col_name, cell):
+        self._rows[row_idx][col_name] = cell
+
+    def _get_col_cell(self, col_name, row_idx):
+        return self._cols[col_name][row_idx - 2]
+
+    def _set_col_cell(self, col_name, row_idx, cell):
+        self._cols[col_name][row_idx - 2] = cell
+
+    def _cell_attrs(self):
+        return Celltable.DEFAULT_CELL_ATTRS
+
+    def _get_cell(self, cell, attr):
+        return getattr(cell, self._cell_attrs()[attr])
+
+    def _set_cell(self, cell, attr, value):
+        setattr(cell, self._cell_attrs()[attr], value)
+
+    def _get_col_idx(self, cell_or_name):
+        if not isinstance(cell_or_name, str):
+            name = self._get_cell(cell_or_name, 'value')
+        else:
+            name = cell_or_name
+        for i, col_name in enumerate(self.col_names):
+            if col_name == name:
+                return self._get_cell(self._col_ids[i], 'col')
+        raise KeyError("Failed to get column index, no column name %s" % name)
+
+    def _get_col_name(self, cell_or_idx):
+        """ Get column name from cell or column index """
+        if not isinstance(cell_or_idx, int):
+            col_idx = self._get_cell(cell_or_idx, 'col')
+        else:
+            col_idx = cell_or_idx
+        return self._get_cell(self._col_ids[col_idx - 1], 'value')
+
     def __len__(self):
-        """
-        :return: Length of rows doesn't include header
-        """
+        """ Length of rows doesn't include header """
         return self._size
 
     def __getitem__(self, row_idx):
-        """
-        Get rows with row index
-
-        :param row_idx: Row index or callable
-        :return: Rows
-        """
+        """ Get rows with row index or callable """
         return self.query({DAO.COL_ROW_IDX: row_idx})
 
     def __setitem__(self, row_idx, value):
-        """
-        Update if contains row_idx else insert.
-        Insert will raise UserWarning when row_idx is callable
-
-        :param row_idx: Row index or callable
-        :raise UserWarning: When row_idx is callable and row_idx is not exists
-        """
+        """ Update if contains row_idx else insert. Insert will raise UserWarning when row_idx is callable """
         if row_idx in self:
             self.update(value, {DAO.COL_ROW_IDX: row_idx})
         elif not callable(row_idx):
@@ -347,22 +330,12 @@ class Celltable(ABC):
                           "Ignore this warning, if you are trying to update rows", UserWarning)
 
     def __delitem__(self, row_idx):
-        """
-        Delete with row index
-
-        :param row_idx: Row index or callable
-        """
+        """ Delete with row index """
         if row_idx in self:
             self.delete({DAO.COL_ROW_IDX: row_idx})
 
     def __contains__(self, row_idx):
-        """
-        Check if row index exists in Celltable
-
-        :param row_idx: Row index or callable
-        :return: If row exist
-        :rtype: bool
-        """
+        """ Check if row index exists in Celltable """
         return len(self._row_and_col_where(where={DAO.COL_ROW_IDX: row_idx})) > 0
 
 
@@ -383,7 +356,7 @@ class LocalCelltable(Celltable):
 
     def _on_delete(self, shifted_cells, popped_cells):
         for cell in shifted_cells:
-            self._worksheet._cells[(cell.row, cell.col_idx)] = self._rows[cell.row][self._col_idx_to_col_id(cell.col_idx).value]
+            self._worksheet._cells[(cell.row, cell.col_idx)] = self._get_row_cell(cell.row, self._get_col_name(cell.col_idx))
         for cell in popped_cells:
             del self._worksheet._cells[(cell.row, cell.col_idx)]
 
@@ -404,6 +377,10 @@ class RemoteCelltable(Celltable):
         self._has_fetched = False
         if fetch:
             self.fetch()
+
+    @property
+    def has_fetched(self):
+        return self._has_fetched
 
     def fetch(self):
         self._on_fetch()
