@@ -25,7 +25,7 @@ class CellbaseTest(unittest.TestCase):
     def test_query_all_and_row_idx_lambda(self):
         for i in range(5):
             self.dao.insert(Simple(id=i, name="simple%s" % i))
-        row_size = len(self.cellbase.celltables[SimpleDAO.TABLE_NAME].rows)
+        row_size = len(self.cellbase.celltables[SimpleDAO.TABLE_NAME]._rows)
         self.assertEqual(row_size, len(self.dao.query()))
         # 5 rows inserted to row index 2, 3, 4, 5, 6
         simples_row_idx_4_to_6 = self.dao[lambda row_idx: 4 <= row_idx <= 6]
