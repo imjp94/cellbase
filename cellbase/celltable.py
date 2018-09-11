@@ -15,10 +15,14 @@ class Celltable(ABC):
 
     def __init__(self, worksheet):
         self._worksheet = worksheet
-        self._rows = {}
+        self._rows = []
         self._cols = {}
         self._col_ids = []
         self._size = 0
+
+    @property
+    def row_idxs(self):
+        return (i for i, _ in enumerate(self._rows, 2))
 
     @property
     def col_names(self):
@@ -44,8 +48,8 @@ class Celltable(ABC):
         rows_to_return = []
         for row_idx in self._row_and_col_where(where):
             values = {DAO.COL_ROW_IDX: row_idx}
-            for key, cell in self._rows[row_idx].items():
-                values[key] = self._get_cell(cell, 'value')
+            for col_name, cell in self._get_row(row_idx).items():
+                values[col_name] = self._get_cell(cell, 'value')
             rows_to_return.append(values)
         return rows_to_return
 
@@ -62,12 +66,12 @@ class Celltable(ABC):
             raise TypeError("Expecting dict given %s" % type(value_in_dict))
         new_row_idx = self.last_row_idx + 1
         new_row = self._on_insert(value_in_dict, new_row_idx)
-        self._rows[new_row_idx] = {}
+        self._rows.append({})
         for col_id in self._col_ids:
             new_cell = new_row[self._get_col_idx(col_id) - 1]
             col_name = self._get_col_name(col_id)
             self._set_row_cell(new_row_idx, col_name, new_cell)
-            self._cols[col_name].append(new_cell)
+            self._get_col(col_name).append(new_cell)
         self._size += 1
         return new_row_idx
 
@@ -167,7 +171,7 @@ class Celltable(ABC):
         pass
 
     @abstractmethod
-    def _on_delete(self, shifted_cells, popped_cells):
+    def _on_delete(self, shifted_coords, popped_coords):
         pass
 
     @abstractmethod
@@ -191,17 +195,17 @@ class Celltable(ABC):
                     if on_parse_cell:
                         on_parse_cell(cell)
                     col_name = self._get_col_name(col_id)
-                    self._cols[col_name].append(cell)
-                    if row_idx not in self._rows:
-                        self._rows[row_idx] = {}
+                    self._get_col(col_name).append(cell)
+                    if row_idx not in self.row_idxs:
+                        self._rows.append({})
                     self._set_row_cell(row_idx, col_name, cell)
 
     def _pop_rows(self, row_idxs):
         # +1 for range exclusive
         row_idxs_affected = list(range(row_idxs[0], self.last_row_idx + 1))
         row_idxs_remain = [row_idx for row_idx in row_idxs_affected if row_idx not in row_idxs]
-        shifted_cells = []
-        popped_cells = []
+        shifted_coords = []
+        popped_coords = []
         for row_idx in row_idxs_affected:
             if row_idxs_remain:
                 row_idx_remain = row_idxs_remain.pop(0)
@@ -211,34 +215,34 @@ class Celltable(ABC):
                     self._set_cell(cell, 'row', row_idx)
                     self._set_row_cell(row_idx, col_name, cell)
                     self._set_col_cell(col_name, row_idx, cell)
-                    shifted_cells.append(cell)
+                    shifted_coords.append((row_idx, self._get_col_idx(col_name)))
             else:
                 # Pop cell that already shifted and left to be empty
-                del self._rows[row_idx]
+                self._rows.pop()
                 for col_name in self.col_names:
-                    cell = self._cols[col_name].pop()
-                    popped_cells.append(cell)
-        return shifted_cells, popped_cells
+                    self._get_col(col_name).pop()
+                    popped_coords.append((row_idx, self._get_col_idx(col_name)))
+        return shifted_coords, popped_coords
 
     def _row_idxs_where(self, where=None):
         """ Find the row indexes where any of the conditions match """
         if where is None:
-            return [row_idx for row_idx in self._rows]
+            return list(self.row_idxs)
         row_idxs = []
         if DAO.COL_ROW_IDX in where:
             cond = where[DAO.COL_ROW_IDX]
             if callable(where[DAO.COL_ROW_IDX]):
-                for row_idx in self._rows:
+                for row_idx in self.row_idxs:
                     if cond(row_idx):
                         row_idxs.append(row_idx)
             else:
                 row_idx = int(cond)
-                if row_idx in self._rows:
+                if row_idx in self.row_idxs:
                     row_idxs.append(row_idx)
         for col_name, cond in where.items():
             if col_name == DAO.COL_ROW_IDX:
                 continue
-            for cell in self._cols[col_name]:
+            for cell in self._get_col(col_name):
                 row_idx = self._get_cell(cell, 'row')
                 value = self._get_cell(cell, 'value')
                 if row_idx not in row_idxs and cond(value) if callable(cond) else value == cond:
@@ -272,17 +276,29 @@ class Celltable(ABC):
                 row_idxs.append(row_idx)
         return row_idxs
 
-    def _get_row_cell(self, row_idx, col_name):
-        return self._rows[row_idx][col_name]
+    def _get_row(self, idx):
+        return self._rows[idx - 2]
 
-    def _set_row_cell(self, row_idx, col_name, cell):
-        self._rows[row_idx][col_name] = cell
+    def _set_row(self, idx, row):
+        self._rows[idx - 2] = row
 
-    def _get_col_cell(self, col_name, row_idx):
-        return self._cols[col_name][row_idx - 2]
+    def _get_col(self, name):
+        return self._cols[name]
 
-    def _set_col_cell(self, col_name, row_idx, cell):
-        self._cols[col_name][row_idx - 2] = cell
+    def _set_col(self, name, col):
+        self._cols[name] = col
+
+    def _get_row_cell(self, idx, name):
+        return self._get_row(idx)[name]
+
+    def _set_row_cell(self, idx, name, cell):
+        self._get_row(idx)[name] = cell
+
+    def _get_col_cell(self, name, idx):
+        return self._get_col(name)[idx - 2]
+
+    def _set_col_cell(self, name, idx, cell):
+        self._get_col(name)[idx - 2] = cell
 
     def _cell_attrs(self):
         return Celltable.DEFAULT_CELL_ATTRS
@@ -354,11 +370,11 @@ class LocalCelltable(Celltable):
         self._worksheet._current_row = orig_current_row
         return list(self._worksheet.rows)[new_row_idx - 1]
 
-    def _on_delete(self, shifted_cells, popped_cells):
-        for cell in shifted_cells:
-            self._worksheet._cells[(cell.row, cell.col_idx)] = self._get_row_cell(cell.row, self._get_col_name(cell.col_idx))
-        for cell in popped_cells:
-            del self._worksheet._cells[(cell.row, cell.col_idx)]
+    def _on_delete(self, shifted_coords, popped_coords):
+        for row_idx, col_idx in shifted_coords:
+            self._worksheet._cells[(row_idx, col_idx)] = self._get_row_cell(row_idx, self._get_col_name(col_idx))
+        for row_idx, col_idx in popped_coords:
+            del self._worksheet._cells[(row_idx, col_idx)]
 
     def _on_traverse(self, cells):
         for cell in cells:
@@ -424,11 +440,13 @@ class GoogleCelltable(RemoteCelltable):
             self._worksheet.insert_rows(new_row_idx - 1, values=values)
         return self._worksheet.get_row(new_row_idx, 'cell')
 
-    def _on_delete(self, shifted_cells, popped_cells):
-        new_cells = []
-        for cell in popped_cells:
-            new_cells.append(Cell((cell.row, cell.col)))
-        self._worksheet.update_cells(shifted_cells + new_cells)
+    def _on_delete(self, shifted_coords, popped_coords):
+        cells = []
+        for row_idx, col_idx in shifted_coords:
+            cells.append(self._get_row_cell(row_idx, self._get_col_name(col_idx)))
+        for row_idx, col_idx in popped_coords:
+            cells.append(Cell((row_idx, col_idx)))
+        self._worksheet.update_cells(cells)
 
     def _on_traverse(self, cells):
         self._worksheet.update_cells(cells)
