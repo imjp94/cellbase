@@ -45,7 +45,7 @@ class Celltable(ABC):
         :rtype: list
         """
         rows_to_return = []
-        for row_idx in self._row_and_col_where(where):
+        for row_idx in self._cross_where(where):
             values = {DAO.COL_ROW_IDX: row_idx}
             for col_name, cell in self._get_row(row_idx).items():
                 values[col_name] = self._get_cell_attr(cell, 'value')
@@ -100,7 +100,7 @@ class Celltable(ABC):
         :return: Number of rows deleted
         :rtype:int
         """
-        row_idxs_to_delete = self._row_and_col_where(where)
+        row_idxs_to_delete = self._cross_where(where)
         num_rows_deleted = len(row_idxs_to_delete)
         if num_rows_deleted == 0:
             return 0
@@ -126,7 +126,7 @@ class Celltable(ABC):
         """
         if not callable(fn):
             raise TypeError("Expected callable for argument fn(cell)")
-        row_idxs_to_traverse = self._row_and_col_where(where)
+        row_idxs_to_traverse = self._cross_where(where)
         num_rows_traversed = len(row_idxs_to_traverse)
         if num_rows_traversed == 0:
             return 0
@@ -217,7 +217,7 @@ class Celltable(ABC):
                     popped_coords.append((row_idx, self._get_col_idx(col_name)))
         return shifted_coords, popped_coords
 
-    def _row_idxs_where(self, where=None):
+    def _vertical_where(self, where=None):
         """ Find the row indexes where any of the conditions match """
         if where is None:
             return list(self.row_idxs)
@@ -242,7 +242,7 @@ class Celltable(ABC):
                     row_idxs.append(row_idx)
         return row_idxs
 
-    def _col_names_where(self, row_idx, where=None):
+    def _horizontal_where(self, row_idx, where=None):
         """ Find the column names where conditions match from a specific row """
         if where is None:
             return list(self.col_names)
@@ -258,14 +258,14 @@ class Celltable(ABC):
                 col_names.append(col_name)
         return col_names
 
-    def _row_and_col_where(self, where=None):
+    def _cross_where(self, where=None):
         """ Find row indexes where all conditions match by combining row_idx_where and col_names_where """
-        row_idxs_where = self._row_idxs_where(where)
+        row_idxs_where = self._vertical_where(where)
         if where is None:
             return row_idxs_where
         row_idxs = []
         for row_idx in row_idxs_where:
-            if len(self._col_names_where(row_idx, where)) == len(where):
+            if len(self._horizontal_where(row_idx, where)) == len(where):
                 row_idxs.append(row_idx)
         return row_idxs
 
@@ -333,7 +333,7 @@ class Celltable(ABC):
 
     def __contains__(self, row_idx):
         """ Check if row index exists in Celltable """
-        return len(self._row_and_col_where(where={DAO.COL_ROW_IDX: row_idx})) > 0
+        return len(self._cross_where(where={DAO.COL_ROW_IDX: row_idx})) > 0
 
 
 class LocalCelltable(Celltable):
