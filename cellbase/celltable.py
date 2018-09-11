@@ -16,7 +16,6 @@ class Celltable(ABC):
     def __init__(self, worksheet):
         self._worksheet = worksheet
         self._rows = []
-        self._cols = {}
         self._col_ids = []
         self._size = 0
 
@@ -71,7 +70,6 @@ class Celltable(ABC):
             new_cell = new_row[self._get_col_idx(col_id) - 1]
             col_name = self._get_col_name(col_id)
             self._set_row_cell(new_row_idx, col_name, new_cell)
-            self._get_col(col_name).append(new_cell)
         self._size += 1
         return new_row_idx
 
@@ -184,7 +182,6 @@ class Celltable(ABC):
 
     def _parse(self, first_row, content_row, on_parse_cell=None):
         self._col_ids = [col_id for col_id in first_row if self._get_cell(col_id, 'value')]  # Ignore cols with no value
-        self._cols = {col_name: [] for col_name in self.col_names}
         for row in content_row:
             row_idx = self._get_cell(row[0], 'row')
             for col_id in self._col_ids:
@@ -194,15 +191,11 @@ class Celltable(ABC):
                         self._size = row_idx - 1
                 if on_parse_cell:
                     on_parse_cell(cell)
-                col_name = self._get_col_name(col_id)
-                self._get_col(col_name).append(cell)
                 if row_idx not in self.row_idxs:
                     self._rows.append({})
-                self._set_row_cell(row_idx, col_name, cell)
+                self._set_row_cell(row_idx, self._get_col_name(col_id), cell)
         # Opt out empty rows after size
         self._rows = self._rows[:self.size]
-        for col_name in self.col_names:
-            self._cols[col_name] = self._cols[col_name][:self.size]
 
     def _pop_rows(self, row_idxs):
         # +1 for range exclusive
@@ -218,13 +211,11 @@ class Celltable(ABC):
                     cell = self._get_row_cell(row_idx_remain, col_name)
                     self._set_cell(cell, 'row', row_idx)
                     self._set_row_cell(row_idx, col_name, cell)
-                    self._set_col_cell(col_name, row_idx, cell)
                     shifted_coords.append((row_idx, self._get_col_idx(col_name)))
             else:
                 # Pop cell that already shifted and left to be empty
                 self._rows.pop()
                 for col_name in self.col_names:
-                    self._get_col(col_name).pop()
                     popped_coords.append((row_idx, self._get_col_idx(col_name)))
         return shifted_coords, popped_coords
 
@@ -246,8 +237,8 @@ class Celltable(ABC):
         for col_name, cond in where.items():
             if col_name == DAO.COL_ROW_IDX:
                 continue
-            for cell in self._get_col(col_name):
-                row_idx = self._get_cell(cell, 'row')
+            for row_idx in self.row_idxs:
+                cell = self._get_row_cell(row_idx, col_name)
                 value = self._get_cell(cell, 'value')
                 if row_idx not in row_idxs and cond(value) if callable(cond) else value == cond:
                     row_idxs.append(row_idx)
@@ -286,23 +277,11 @@ class Celltable(ABC):
     def _set_row(self, idx, row):
         self._rows[idx - 2] = row
 
-    def _get_col(self, name):
-        return self._cols[name]
-
-    def _set_col(self, name, col):
-        self._cols[name] = col
-
     def _get_row_cell(self, idx, name):
         return self._get_row(idx)[name]
 
     def _set_row_cell(self, idx, name, cell):
         self._get_row(idx)[name] = cell
-
-    def _get_col_cell(self, name, idx):
-        return self._get_col(name)[idx - 2]
-
-    def _set_col_cell(self, name, idx, cell):
-        self._get_col(name)[idx - 2] = cell
 
     def _cell_attrs(self):
         return Celltable.DEFAULT_CELL_ATTRS
