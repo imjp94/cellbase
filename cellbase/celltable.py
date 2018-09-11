@@ -192,13 +192,17 @@ class Celltable(ABC):
                 if self._get_cell(cell, 'value'):
                     if self._size < row_idx:
                         self._size = row_idx - 1
-                    if on_parse_cell:
-                        on_parse_cell(cell)
-                    col_name = self._get_col_name(col_id)
-                    self._get_col(col_name).append(cell)
-                    if row_idx not in self.row_idxs:
-                        self._rows.append({})
-                    self._set_row_cell(row_idx, col_name, cell)
+                if on_parse_cell:
+                    on_parse_cell(cell)
+                col_name = self._get_col_name(col_id)
+                self._get_col(col_name).append(cell)
+                if row_idx not in self.row_idxs:
+                    self._rows.append({})
+                self._set_row_cell(row_idx, col_name, cell)
+        # Opt out empty rows after size
+        self._rows = self._rows[:self.size]
+        for col_name in self.col_names:
+            self._cols[col_name] = self._cols[col_name][:self.size]
 
     def _pop_rows(self, row_idxs):
         # +1 for range exclusive
