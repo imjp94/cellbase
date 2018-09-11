@@ -25,7 +25,7 @@ class Celltable(ABC):
 
     @property
     def col_names(self):
-        return (self._get_cell(col_id, 'value') for col_id in self._col_ids)
+        return (self._get_cell_attr(col_id, 'value') for col_id in self._col_ids)
 
     @property
     def size(self):
@@ -48,7 +48,7 @@ class Celltable(ABC):
         for row_idx in self._row_and_col_where(where):
             values = {DAO.COL_ROW_IDX: row_idx}
             for col_name, cell in self._get_row(row_idx).items():
-                values[col_name] = self._get_cell(cell, 'value')
+                values[col_name] = self._get_cell_attr(cell, 'value')
             rows_to_return.append(values)
         return rows_to_return
 
@@ -69,7 +69,7 @@ class Celltable(ABC):
         for col_id in self._col_ids:
             new_cell = new_row[self._get_col_idx(col_id) - 1]
             col_name = self._get_col_name(col_id)
-            self._set_row_cell(new_row_idx, col_name, new_cell)
+            self._set_cell(new_row_idx, col_name, new_cell)
         self._size += 1
         return new_row_idx
 
@@ -88,10 +88,8 @@ class Celltable(ABC):
                 where = {DAO.COL_ROW_IDX: value_in_dict[DAO.COL_ROW_IDX]}
             except KeyError:
                 raise KeyError("row_idx not found, it must be provided if 'where' is omitted")
-        return self.traverse(
-            lambda cell: self._set_cell(
-                cell, 'value', value_in_dict[self._get_col_name(cell)]), where
-        )
+        return self.traverse(lambda cell: self._set_cell_attr(cell, 'value', value_in_dict[self._get_col_name(cell)]),
+                             where)
 
     def delete(self, where=None):
         """
@@ -136,7 +134,7 @@ class Celltable(ABC):
         traversed_cells = []
         for row_idx in row_idxs_to_traverse:
             for col_name in [col_name for col_name in self.col_names if col_name in select]:
-                cell = self._get_row_cell(row_idx, col_name)
+                cell = self._get_cell(row_idx, col_name)
                 fn(cell)
                 traversed_cells.append(cell)
         self._on_traverse(traversed_cells)
@@ -181,19 +179,19 @@ class Celltable(ABC):
         pass
 
     def _parse(self, first_row, content_row, on_parse_cell=None):
-        self._col_ids = [col_id for col_id in first_row if self._get_cell(col_id, 'value')]  # Ignore cols with no value
+        self._col_ids = [col_id for col_id in first_row if self._get_cell_attr(col_id, 'value')]
         for row in content_row:
-            row_idx = self._get_cell(row[0], 'row')
+            row_idx = self._get_cell_attr(row[0], 'row')
             for col_id in self._col_ids:
                 cell = row[self._get_col_idx(col_id) - 1]  # -1 as row is list(0 indexed)
-                if self._get_cell(cell, 'value'):
+                if self._get_cell_attr(cell, 'value'):
                     if self._size < row_idx:
                         self._size = row_idx - 1
                 if on_parse_cell:
                     on_parse_cell(cell)
                 if row_idx not in self.row_idxs:
                     self._rows.append({})
-                self._set_row_cell(row_idx, self._get_col_name(col_id), cell)
+                self._set_cell(row_idx, self._get_col_name(col_id), cell)
         # Opt out empty rows after size
         self._rows = self._rows[:self.size]
 
@@ -208,9 +206,9 @@ class Celltable(ABC):
                 row_idx_remain = row_idxs_remain.pop(0)
                 # Shift cell to overwrite "deleted" cell
                 for col_name in self.col_names:
-                    cell = self._get_row_cell(row_idx_remain, col_name)
-                    self._set_cell(cell, 'row', row_idx)
-                    self._set_row_cell(row_idx, col_name, cell)
+                    cell = self._get_cell(row_idx_remain, col_name)
+                    self._set_cell_attr(cell, 'row', row_idx)
+                    self._set_cell(row_idx, col_name, cell)
                     shifted_coords.append((row_idx, self._get_col_idx(col_name)))
             else:
                 # Pop cell that already shifted and left to be empty
@@ -238,8 +236,8 @@ class Celltable(ABC):
             if col_name == DAO.COL_ROW_IDX:
                 continue
             for row_idx in self.row_idxs:
-                cell = self._get_row_cell(row_idx, col_name)
-                value = self._get_cell(cell, 'value')
+                cell = self._get_cell(row_idx, col_name)
+                value = self._get_cell_attr(cell, 'value')
                 if row_idx not in row_idxs and cond(value) if callable(cond) else value == cond:
                     row_idxs.append(row_idx)
         return row_idxs
@@ -254,8 +252,8 @@ class Celltable(ABC):
                 if cond(row_idx) if callable(cond) else row_idx == int(cond):
                     col_names.append(col_name)
                 continue
-            cell = self._get_row_cell(row_idx, col_name)
-            value = self._get_cell(cell, 'value')
+            cell = self._get_cell(row_idx, col_name)
+            value = self._get_cell_attr(cell, 'value')
             if cond(value) if callable(cond) else value == cond:
                 col_names.append(col_name)
         return col_names
@@ -277,38 +275,38 @@ class Celltable(ABC):
     def _set_row(self, idx, row):
         self._rows[idx - 2] = row
 
-    def _get_row_cell(self, idx, name):
+    def _get_cell(self, idx, name):
         return self._get_row(idx)[name]
 
-    def _set_row_cell(self, idx, name, cell):
+    def _set_cell(self, idx, name, cell):
         self._get_row(idx)[name] = cell
 
     def _cell_attrs(self):
         return Celltable.DEFAULT_CELL_ATTRS
 
-    def _get_cell(self, cell, attr):
+    def _get_cell_attr(self, cell, attr):
         return getattr(cell, self._cell_attrs()[attr])
 
-    def _set_cell(self, cell, attr, value):
+    def _set_cell_attr(self, cell, attr, value):
         setattr(cell, self._cell_attrs()[attr], value)
 
     def _get_col_idx(self, cell_or_name):
         if not isinstance(cell_or_name, str):
-            name = self._get_cell(cell_or_name, 'value')
+            name = self._get_cell_attr(cell_or_name, 'value')
         else:
             name = cell_or_name
         for i, col_name in enumerate(self.col_names):
             if col_name == name:
-                return self._get_cell(self._col_ids[i], 'col')
+                return self._get_cell_attr(self._col_ids[i], 'col')
         raise KeyError("Failed to get column index, no column name %s" % name)
 
     def _get_col_name(self, cell_or_idx):
         """ Get column name from cell or column index """
         if not isinstance(cell_or_idx, int):
-            col_idx = self._get_cell(cell_or_idx, 'col')
+            col_idx = self._get_cell_attr(cell_or_idx, 'col')
         else:
             col_idx = cell_or_idx
-        return self._get_cell(self._col_ids[col_idx - 1], 'value')
+        return self._get_cell_attr(self._col_ids[col_idx - 1], 'value')
 
     def __len__(self):
         """ Length of rows doesn't include header """
@@ -355,7 +353,7 @@ class LocalCelltable(Celltable):
 
     def _on_delete(self, shifted_coords, popped_coords):
         for row_idx, col_idx in shifted_coords:
-            self._worksheet._cells[(row_idx, col_idx)] = self._get_row_cell(row_idx, self._get_col_name(col_idx))
+            self._worksheet._cells[(row_idx, col_idx)] = self._get_cell(row_idx, self._get_col_name(col_idx))
         for row_idx, col_idx in popped_coords:
             del self._worksheet._cells[(row_idx, col_idx)]
 
@@ -426,7 +424,7 @@ class GoogleCelltable(RemoteCelltable):
     def _on_delete(self, shifted_coords, popped_coords):
         cells = []
         for row_idx, col_idx in shifted_coords:
-            cells.append(self._get_row_cell(row_idx, self._get_col_name(col_idx)))
+            cells.append(self._get_cell(row_idx, self._get_col_name(col_idx)))
         for row_idx, col_idx in popped_coords:
             cells.append(Cell((row_idx, col_idx)))
         self._worksheet.update_cells(cells)
