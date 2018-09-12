@@ -39,10 +39,7 @@ class Celltable(ABC):
         """
         Query data where conditions match
 
-        :param where: dict of columns id to inspect. For example, {'id': 1, 'name': 'jp'}.
-        :type where: dict
         :return: List of rows
-        :rtype: list
         """
         rows_to_return = []
         for row_idx in self._cross_where(where):
@@ -52,19 +49,16 @@ class Celltable(ABC):
             rows_to_return.append(values)
         return rows_to_return
 
-    def insert(self, value_in_dict):
+    def insert(self, data):
         """
-        Insert new row of data
+        Insert new row of data, expect value of row in dict corresponding to col_names
 
-        :param value_in_dict: Value of row in dict corresponding to col_names
-        :type value_in_dict: dict
         :return: New row index
-        :rtype: int
         """
-        if not isinstance(value_in_dict, dict):
-            raise TypeError("Expecting dict given %s" % type(value_in_dict))
+        if not isinstance(data, dict):
+            raise TypeError("Expecting dict given %s" % type(data))
         new_row_idx = self.last_row_idx + 1
-        new_row = self._on_insert(value_in_dict, new_row_idx)
+        new_row = self._on_insert(data, new_row_idx)
         self._rows.append({})
         for col_id in self._col_ids:
             new_cell = new_row[self._get_col_idx(col_id) - 1]
@@ -73,31 +67,24 @@ class Celltable(ABC):
         self._size += 1
         return new_row_idx
 
-    def update(self, value_in_dict, where=None):
+    def update(self, data, where=None):
         """
         Update row(s) where conditions match
 
-        :param value_in_dict:
-        :param where: dict of columns id to inspect. For example, {'id': 1, 'name': 'jp'}.
-        :type where: dict
         :return: Number of rows updated
-        :rtype: int
         """
-        if DAO.COL_ROW_IDX in value_in_dict:
-            where = {DAO.COL_ROW_IDX: value_in_dict[DAO.COL_ROW_IDX]}
+        if DAO.COL_ROW_IDX in data:
+            where = {DAO.COL_ROW_IDX: data[DAO.COL_ROW_IDX]}
         elif not where:
             raise KeyError("row_idx not found, it must be provided if 'where' is omitted")
-        return self.traverse(lambda cell: self._set_cell_attr(cell, 'value', value_in_dict[self._get_col_name(cell)]),
+        return self.traverse(lambda cell: self._set_cell_attr(cell, 'value', data[self._get_col_name(cell)]),
                              where)
 
     def delete(self, where=None):
         """
         Delete row(s) of data where conditions match
 
-        :param where: dict of columns id to inspect. For example, {'id': 1, 'name': 'jp'}.
-        :type where: dict
         :return: Number of rows deleted
-        :rtype:int
         """
         row_idxs_to_delete = self._cross_where(where)
         num_rows_deleted = len(row_idxs_to_delete)
@@ -111,17 +98,9 @@ class Celltable(ABC):
         """
         Access cells directly from rows where condition match
 
-        :param fn:
-            function(cell) to allow accessing the cell.
-            For example, lambda cell: cell.fill = PatternFill(fill_type="solid", fgColor="00FFFF00").
-        :param where: dict of columns id to inspect. For example, {'id': 1, 'name': 'jp'}.
-        :type where: dict
-        :param select:
-            The columns of the row to update.
-            For example, ["id"], where only column under "id" will be accessed
-        :type select: list
+        Select all column if select omitted
+
         :return: Number of rows traversed
-        :rtype: int
         """
         if not callable(fn):
             raise TypeError("Expected callable for argument fn(cell)")
@@ -142,19 +121,10 @@ class Celltable(ABC):
     def format(self, formatter, where=None, select=None):
         """
         Convenience method that built on top of traverse to format cell(s).
-        If formatter is given, all other formats will be ignored.
 
-        :param formatter:
-            CellFormatter that hold all formats. When this is not None other formats will be ignored.
-        :type formatter: CellFormatter
-        :param where: dict of columns id to inspect. For example, {'id': 1, 'name': 'jp'}.
-        :type where: dict
-        :param select:
-            The columns of the row to update.
-            For example, ["id"], where only column under "id" will be formatted
-        :type select: list
-        :return: Number of rows formatted
-        :rtype: int
+        formatter can be :class:`cellbase.formatter.CellFormatter` or dict
+
+        :return: Number of formatted rows
         """
         if len(formatter) == 0:
             return 0
@@ -162,7 +132,7 @@ class Celltable(ABC):
         return self.traverse(lambda cell: formatter.format(cell), where=where, select=select)
 
     @abstractmethod
-    def _on_insert(self, value_in_dict, new_row_idx):
+    def _on_insert(self, data, new_row_idx):
         pass
 
     @abstractmethod
@@ -195,7 +165,6 @@ class Celltable(ABC):
         self._rows = self._rows[:self.size]
 
     def _pop_rows(self, row_idxs):
-        # +1 for range exclusive
         row_idxs_affected = list(range(row_idxs[0], self.last_row_idx + 1))
         row_idxs_remain = [row_idx for row_idx in row_idxs_affected if row_idx not in row_idxs]
         shifted_coords = []
@@ -315,12 +284,12 @@ class Celltable(ABC):
         """ Get rows with row index or callable """
         return self.query({DAO.COL_ROW_IDX: row_idx})
 
-    def __setitem__(self, row_idx, value):
+    def __setitem__(self, row_idx, data):
         """ Update if contains row_idx else insert. Insert will raise UserWarning when row_idx is callable """
         if row_idx in self:
-            self.update(value, {DAO.COL_ROW_IDX: row_idx})
+            self.update(data, {DAO.COL_ROW_IDX: row_idx})
         elif not callable(row_idx):
-            self.insert(value)
+            self.insert(data)
         else:
             warnings.warn("Insertion with callable is not supported, please use Cellbase/DAO.insert() instead."
                           "Ignore this warning, if you are trying to update rows", UserWarning)
@@ -342,11 +311,11 @@ class LocalCelltable(Celltable):
         super().__init__(worksheet)
         self._parse(worksheet[1], worksheet.iter_rows(min_row=2))
 
-    def _on_insert(self, value_in_dict, new_row_idx):
+    def _on_insert(self, data, new_row_idx):
         # Make sure openpyxl actualy append at last row
         orig_current_row = self._worksheet._current_row
         self._worksheet._current_row = self._size + 1  # row_idx = worksheet._current_row + 1, see worksheet.append
-        self._worksheet.append({col_id.col_idx: value_in_dict[col_id.value] for col_id in self._col_ids})
+        self._worksheet.append({col_id.col_idx: data[col_id.value] for col_id in self._col_ids})
         self._worksheet._current_row = orig_current_row
         return list(self._worksheet.rows)[new_row_idx - 1]
 
@@ -386,24 +355,24 @@ class RemoteCelltable(Celltable):
     def _on_fetch(self):
         pass
 
-    def query(self, where=None):
+    def _fetch_if_havent(self):
         if not self._has_fetched:
             self.fetch()
+
+    def query(self, where=None):
+        self._fetch_if_havent()
         return super().query(where)
 
-    def insert(self, value_in_dict):
-        if not self._has_fetched:
-            self.fetch()
-        return super().insert(value_in_dict)
+    def insert(self, data):
+        self._fetch_if_havent()
+        return super().insert(data)
 
     def delete(self, where=None):
-        if not self._has_fetched:
-            self.fetch()
+        self._fetch_if_havent()
         return super().delete(where)
 
     def traverse(self, fn, where=None, select=None):
-        if not self._has_fetched:
-            self.fetch()
+        self._fetch_if_havent()
         return super().traverse(fn, where, select)
 
 
@@ -411,8 +380,8 @@ class GoogleCelltable(RemoteCelltable):
     def __init__(self, worksheet, fetch=False):
         super().__init__(worksheet, fetch)
 
-    def _on_insert(self, value_in_dict, new_row_idx):
-        values = self._value_in_dict_to_row_value(value_in_dict)
+    def _on_insert(self, data, new_row_idx):
+        values = self._data_to_row_value(data)
         if self._worksheet.rows - 1 > self._size:
             self._worksheet.update_row(new_row_idx, values)
         else:
@@ -438,13 +407,13 @@ class GoogleCelltable(RemoteCelltable):
     def _formatter_cls(self):
         return GoogleCellFormatter
 
-    def _value_in_dict_to_row_value(self, value_in_dict):
+    def _data_to_row_value(self, data):
         """ Convert dictionary to list according the sequence of col_ids """
         col_seqs = [col_id.col for col_id in self._col_ids]
         values = []
         for col_idx in range(1, self._col_ids[-1].col + 1):
             if col_idx in col_seqs:
-                values.append(value_in_dict[self._col_ids[col_seqs.index(col_idx)].value])
+                values.append(data[self._col_ids[col_seqs.index(col_idx)].value])
             else:
                 values.append('')
         return values
