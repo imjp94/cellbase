@@ -353,8 +353,13 @@ class GoogleCellbase(Cellbase):
         return GoogleCelltable(worksheet)
 
     def _on_drop(self, worksheet_name):
-        # TODO: Should make sure there is at least 1 visible worksheet else create 1 before delete
         worksheet_to_drop = self.workbook.worksheet_by_title(worksheet_name)
+        # Workbook must contain at least 1 visible sheet
+        visible_sheets = [worksheet for worksheet in self.workbook.worksheets()
+                          if not worksheet.jsonSheet['properties'].get('hidden', False)]
+        if len(visible_sheets) == 1 and visible_sheets[0] is worksheet_to_drop:
+            titles = [worksheet.title for worksheet in self.workbook.worksheets()]
+            self.workbook.add_worksheet(new_worksheet_title(titles))
         self.workbook.del_worksheet(worksheet_to_drop)
 
     def _on_save(self, path, filename):
@@ -374,3 +379,11 @@ class GoogleCellbase(Cellbase):
                 else:
                     self.__dict__[attr] = default
                 return default
+
+
+def new_worksheet_title(titles, counter=0, name='Sheet'):
+    new_name = '%s%s' % (name, counter or '')
+    if new_name in titles:
+        return new_worksheet_title(titles, counter + 1, name)
+    else:
+        return new_name
