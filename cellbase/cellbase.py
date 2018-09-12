@@ -1,5 +1,5 @@
 import os
-from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod, ABCMeta
 
 import pygsheets
 from openpyxl import Workbook, load_workbook
@@ -321,22 +321,45 @@ class LocalCellbase(Cellbase):
         self.workbook.save(os.path.join(path, filename))
 
 
-class GoogleCellbase(Cellbase):
-    ATTRIBUTES = ('client_secret', 'service_account_file', 'credentials_directory')
-
-    def __init__(self, export_format=ExportType.CSV, **kwargs):
+class RemoteCellbase(Cellbase, metaclass=ABCMeta):
+    def __init__(self, **kwargs):
         super().__init__()
-        unexpected_attrs = [attr for attr in kwargs if attr not in GoogleCellbase.ATTRIBUTES]
+        unexpected_attrs = [attr for attr in kwargs if attr not in self.attrs()]
         print(unexpected_attrs)
         if unexpected_attrs:
             raise AttributeError("Unexpected attribute%s, expecting%s only" %
                                  (unexpected_attrs, GoogleCellbase.ATTRIBUTES))
         else:
             self.__dict__.update(kwargs)
+
+    @abstractmethod
+    def attrs(self):
+        pass
+
+    def __getattr__(self, attr):
+        try:
+            return self.__dict__[attr]
+        except KeyError:
+            if attr not in self.attrs():
+                raise AttributeError("Unexpected attribute %s, expecting%s only" % (attr, GoogleCellbase.ATTRIBUTES))
+            else:
+                self.__dict__[attr] = None
+                return None
+
+
+class GoogleCellbase(RemoteCellbase):
+    ATTRIBUTES = ('client_secret', 'service_account_file', 'credentials_directory')
+
+    def __init__(self, export_format=ExportType.CSV, **kwargs):
+        super().__init__(**kwargs)
         self.export_format = export_format
 
+    def attrs(self):
+        return GoogleCellbase.ATTRIBUTES
+
     def _on_load(self, raise_err):
-        client = pygsheets.authorize(self.client_secret, self.service_account_file, self.credentials_directory)
+        client = pygsheets.authorize(self.client_secret or 'client_secret.json', self.service_account_file,
+                                     self.credentials_directory)
         try:
             self.workbook = client.open(self._filename)
         except SpreadsheetNotFound:
@@ -364,21 +387,6 @@ class GoogleCellbase(Cellbase):
 
     def _on_save(self, path, filename):
         self.workbook.export(self.export_format, path, filename)
-
-    def __getattr__(self, attr):
-        try:
-            return self.__dict__[attr]
-        except KeyError:
-            if attr not in GoogleCellbase.ATTRIBUTES:
-                raise AttributeError("Unexpected attribute %s, expecting%s only" % (attr, GoogleCellbase.ATTRIBUTES))
-            else:
-                default = None
-                if attr == 'client_secret':
-                    default = 'client_secret.json'
-                    self.__dict__[attr] = default
-                else:
-                    self.__dict__[attr] = default
-                return default
 
 
 def new_worksheet_title(titles, counter=0, name='Sheet'):
