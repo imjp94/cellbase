@@ -34,53 +34,56 @@ class DAO:
 
     def query(self, where=None):
         """
-        Return data from Cellbase that match conditions, return all if no condition given.
+        Return data from Celltable with specified worksheet, that match the conditions.
 
-        :param where: dict of columns id to inspect. For example, {'id': 1, 'name': 'jp'}.
-        :type where: dict
+        Return all data if where omitted.
+
+        Example::
+
+            where = {'id': 1, 'name': 'jp'}
+
         :return:
-            List of dict that store value corresponding to the column id.
-            * row_idx is the default value to return, where it specifies the row index of returned data.
-            row_idx is corresponding to the actual row index in spreadsheet, so the minimum index is 2 where 1st row
-            is taken by the column ids(header)
+            List of dict that store value corresponding to the row_idx & column id.
             For example, [{"row_idx": 2, "id": 1, "name": "jp1"}, {"row_idx": 3, "id": 2, "name": "jp2"}]
-        :rtype: list
         """
         return [self.new_entity().from_dict(value) for value in
                 self.cellbase.query(self.worksheet_name(), where=where)]
 
     def insert(self, entity):
         """
-        Insert new row of data with Entity object, after insertion, entity.row_idx will be updated as well.
+        Insert new row to the worksheet
 
-        :param entity: Entity object to insert
-        :type entity: Entity
-        :return: Given Entity object
+        Example::
+
+            value_in_dict = {"id": 1, "name": "jp1"}
+        :return: row_idx of new row
         """
         entity.row_idx = self.cellbase.insert(self.worksheet_name(), entity.to_dict())
         return entity
 
     def update(self, entity, where=None):
         """
-        Update row(s) of data where conditions match with Entity object
+        Update row(s) that match the condition.
 
-        :param entity: Entity object to update to
-        :type entity: Entity
-        :param where: dict of columns id to inspect. For example, {'id': 1, 'name': 'jp'}.
-        :type where: dict
-        :return: Number of rows updated
-        :rtype: int
+        If row_idx is given in value_in_dict, where will be ignored and only the exact row will be updated.
+
+        Example::
+
+            where = {'id': 1, 'name': 'jp'}.
+        :return: Number of updated rows
         """
         return self.cellbase.update(self.worksheet_name(), entity.to_dict(), where=where)
 
     def delete(self, where=None):
         """
-        Delete row(s) of data where conditions match
+        Delete row(s) that match conditions.
 
-        :param where: dict of columns id to inspect. For example, {'id': 1, 'name': 'jp'}.
-        :type where: dict
-        :return: Number of rows deleted
-        :rtype: int
+        Delete all if where omitted.
+
+        Example::
+
+            where = {'id': 1, 'name': 'jp'}.
+        :return: Number of deleted rows
         """
         return self.cellbase.delete(self.worksheet_name(), where=where)
 
@@ -88,36 +91,23 @@ class DAO:
         """
         Access cells directly from rows where conditions matched.
 
-        :param fn:
-            function(:class:`openpyxl.cell.Cell`) to allow accessing the cell.
-            For example, lambda cell: cell.fill = PatternFill(fill_type="solid", fgColor="00FFFF00").
-        :param where: dict of columns id to inspect. For example, {'id': 1, 'name': 'jp'}.
-        :type where: dict
-        :param select:
-            The columns of the row to update.
-            For example, ["id"], where only column under "id" will be accessed
-        :type select: list
-        :return: Number of rows traversed
-        :rtype: int
+        Select all column if select omitted
+
+        Example::
+
+            fn = lambda cell: cell.fill = PatternFill(fill_type="solid", fgColor="00FFFF00").
+
+            select = ['id']  # only column under "id" will be accessed
+        :return: Number of traversed rows
         """
         return self.cellbase.traverse(self.worksheet_name(), fn, where=where, select=select)
 
     def format(self, formatter, where=None, select=None):
         """
         Convenience method that built on top of traverse to format cell(s).
-        If formatter is given, all other formats will be ignored.
 
-        :param where: dict of columns id to inspect. For example, {'id': 1, 'name': 'jp'}.
-        :type where: dict
-        :param select:
-            The columns of the row to update.
-            For example, ["id"], where only column under "id" will be formatted
-        :type select: list
-        :param formatter:
-            CellFormatter or dict that hold all formats.
-        :type formatter: CellFormatter or dict
-        :return: Number of rows formatted
-        :rtype: int
+        formatter can be :class:`cellbase.formatter.CellFormatter` or dict
+        :return: Number of formatted rows
         """
         return self.cellbase.format(self.worksheet_name(), formatter, where, select)
 
