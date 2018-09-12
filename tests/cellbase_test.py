@@ -12,7 +12,7 @@ from cellbase.celltable import LocalCelltable
 class CellbaseTest(unittest.TestCase):
     def setUp(self):
         self.cellbase = LocalCellbase().load("res", "not_exist.xlsx")
-        self.cellbase.register(on_create=SimpleDAO.on_create())
+        self.cellbase.register(SimpleDAO.on_create())
         self.dao = SimpleDAO(self.cellbase)
         self.assertEqual(Simple(id=1, name="name"), Simple(id=1, name="name"))  # Test entity's equality
 
@@ -119,7 +119,7 @@ class CellbaseTest(unittest.TestCase):
         # __setitem__
         with self.assertRaises(AssertionError):
             self.cellbase[SimpleDAO.TABLE_NAME] = LocalCelltable(
-                self.cellbase.workbook.create_sheet(title=SimpleDAO.TABLE_NAME))
+                self.cellbase._workbook.create_sheet(title=SimpleDAO.TABLE_NAME))
 
 
 def is_all_format_match(cell, formatter):
