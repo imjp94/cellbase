@@ -11,31 +11,48 @@ from cellbase.celltable import Celltable, LocalCelltable, GoogleCelltable
 
 class Cellbase(ABC):
     """
-        Cellbase is equivalent to :class:`Workbook` which stores :class:`Celltable`
-        """
+    Cellbase is equivalent to :class:`Workbook` which stores :class:`Celltable`
+    """
     DEFAULT_FILENAME = 'cellbase.xlsx'
 
     def __init__(self):
-        self.filename = Cellbase.DEFAULT_FILENAME
+        self._path = ''
+        self._filename = Cellbase.DEFAULT_FILENAME
         self.workbook = None
         self.schemas = {}
         self.celltables = {}
 
-    def load(self, filename):
+    @property
+    def path(self):
+        return self._path
+
+    @property
+    def filename(self):
+        return self._filename
+
+    @property
+    def dir(self):
+        return os.path.join(self.path, self.filename)
+
+    def load(self, path, filename, raise_err=False):
         """
-        Load workbook from given filename
+        Load workbook from given dir
 
         Notice how this named as "load" instead of "open" as it does not open a connection or stream with the workbook.
         Instead, it simply load the data into memory and any changes will only be saved unless save or save_as
         is called.
 
-        :param filename: Path of workbook to load
+        :param path: Path of workbook to load
+        :type path: str
+        :param filename: Filename of workbook to load
         :type filename: str
+        :param raise_err: Whether to raise FileNotFoundError or create new workbook
         :return: self
         :rtype: Cellbase
         """
-        self.filename = filename
-        self._on_load()
+        self._path = path
+        self._filename = filename
+        self._on_load(raise_err)
         return self
 
     def create_if_none(self, worksheet_name):
@@ -47,7 +64,7 @@ class Cellbase(ABC):
         :type worksheet_name: str
         """
         if worksheet_name not in self.celltables:
-            if self.schemas is None:
+            if worksheet_name not in self.schemas:
                 raise ValueError(
                     "Trying to create Celltable '%s' without schema " % worksheet_name)
             self.celltables[worksheet_name] = self._on_create(worksheet_name)
@@ -62,10 +79,12 @@ class Cellbase(ABC):
         self._on_drop(worksheet_name)
         self.celltables.pop(worksheet_name)
 
-    def save_as(self, filename, overwrite=False):
+    def save_as(self, path, filename, overwrite=False):
         """
-        Save workbook to filename. FileExistsError will be raised if file exists and overwrite is False.
+        Save workbook to dir. FileExistsError will be raised if file exists and overwrite is False.
 
+        :param path: Path of workbook to load
+        :type path: str
         :param filename: Path to save the workbook
         :type filename: str
         :param overwrite: Whether to overwrite if file exists
@@ -74,16 +93,16 @@ class Cellbase(ABC):
         """
         if os.path.exists(filename) and not overwrite:
             raise FileExistsError("%s already exists, set overwrite=True if this is expected.")
-        self._on_save(filename)
+        self._on_save(path, filename)
 
     def save(self):
         """
         Save workbook to the filename specified in open, overwrite if file exist.
         """
-        self.save_as(self.filename, overwrite=True)
+        self.save_as(self.path, self.filename, overwrite=True)
 
     @abstractmethod
-    def _on_load(self):
+    def _on_load(self, raise_err):
         pass
 
     @abstractmethod
@@ -95,7 +114,7 @@ class Cellbase(ABC):
         pass
 
     @abstractmethod
-    def _on_save(self, filename):
+    def _on_save(self, path, filename):
         pass
 
     @abstractmethod
@@ -283,11 +302,15 @@ class LocalCellbase(Cellbase):
 
     def __init__(self):
         super().__init__()
-        self.filename = os.path.join(os.getcwd(), Cellbase.DEFAULT_FILENAME)
         self.workbook = Workbook()
 
-    def _on_load(self):
-        self.workbook = load_workbook(self.filename) if os.path.exists(self.filename) else Workbook()
+    def _on_load(self, raise_err):
+        if os.path.exists(self.dir):
+            self.workbook = load_workbook(self.dir)
+        elif raise_err:
+            raise FileNotFoundError("No workbook found at %s" % self.dir)
+        else:
+            self.workbook = Workbook()
         for worksheet in self.workbook.worksheets:
             self.celltables[worksheet.title] = LocalCelltable(worksheet)
 
@@ -305,8 +328,8 @@ class LocalCellbase(Cellbase):
             self.workbook.create_sheet()
         self.workbook.remove(worksheet_to_drop)
 
-    def _on_save(self, filename):
-        self.workbook.save(filename)
+    def _on_save(self, path, filename):
+        self.workbook.save(os.path.join(path, filename))
 
     def remove_empty_cols(self, worksheet_name):
         worksheet = self.workbook[worksheet_name]
@@ -315,9 +338,9 @@ class LocalCellbase(Cellbase):
 
 
 class GoogleCellbase(Cellbase):
-    ATTRIBUTES = ('client_secret', 'service_account_file', 'credentials_directory', 'folder_id')
+    ATTRIBUTES = ('client_secret', 'service_account_file', 'credentials_directory')
 
-    def __init__(self, export_path='', export_format=ExportType.CSV, **kwargs):
+    def __init__(self, export_format=ExportType.CSV, **kwargs):
         super().__init__()
         unexpected_attrs = [attr for attr in kwargs if attr not in GoogleCellbase.ATTRIBUTES]
         print(unexpected_attrs)
@@ -327,20 +350,22 @@ class GoogleCellbase(Cellbase):
         else:
             self.__dict__.update(kwargs)
         self.export_format = export_format
-        self.export_path = export_path
 
-    def _on_load(self, ):
+    def _on_load(self, raise_err):
         client = pygsheets.authorize(self.client_secret, self.service_account_file, self.credentials_directory)
         try:
-            self.workbook = client.open(self.filename)
+            self.workbook = client.open(self._filename)
         except SpreadsheetNotFound:
-            self.workbook = client.create(self.filename, folder=self.folder_id or 'root')
+            if raise_err:
+                raise FileNotFoundError("No workbook found at %s" % self.filename)
+            else:
+                self.workbook = client.create(self._filename, folder=self.path or 'root')
         for worksheet in self.workbook.worksheets():
             self.celltables[worksheet.title] = GoogleCelltable(worksheet, worksheet.title in self.schemas)
 
     def _on_create(self, worksheet_name):
         worksheet = self.workbook.add_worksheet(worksheet_name)
-        worksheet.insert_rows(1, values=self.schemas[worksheet_name])
+        worksheet.update_row(1, self.schemas[worksheet_name])
         return GoogleCelltable(worksheet)
 
     def _on_drop(self, worksheet_name):
@@ -348,8 +373,8 @@ class GoogleCellbase(Cellbase):
         worksheet_to_drop = self.workbook.worksheet_by_title(worksheet_name)
         self.workbook.del_worksheet(worksheet_to_drop)
 
-    def _on_save(self, filename):
-        self.workbook.export(self.export_format, self.export_path, filename)
+    def _on_save(self, path, filename):
+        self.workbook.export(self.export_format, path, filename)
 
     def remove_empty_cols(self, worksheet_name):
         worksheet = self.workbook.worksheet_by_title(worksheet_name)

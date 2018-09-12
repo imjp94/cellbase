@@ -11,7 +11,7 @@ from cellbase.celltable import LocalCelltable
 
 class CellbaseTest(unittest.TestCase):
     def setUp(self):
-        self.cellbase = LocalCellbase().load("../out/not_exist.xlsx")
+        self.cellbase = LocalCellbase().load("res", "not_exist.xlsx")
         self.cellbase.register(on_create=SimpleDAO.on_create())
         self.dao = SimpleDAO(self.cellbase)
         self.assertEqual(Simple(id=1, name="name"), Simple(id=1, name="name"))  # Test entity's equality
