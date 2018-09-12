@@ -10,6 +10,10 @@ class DAO:
     def __init__(self, cellbase):
         self.cellbase = cellbase
 
+    @property
+    def celltable(self):
+        return self.cellbase[self.worksheet_name()]
+
     @abstractmethod
     def worksheet_name(self):
         """
@@ -118,63 +122,28 @@ class DAO:
         return self.cellbase.format(self.worksheet_name(), formatter, where, select)
 
     def drop(self):
-        """
-        Delete worksheet that specified in worksheet_name
-        """
+        """ Delete worksheet that specified in worksheet_name """
         return self.cellbase.drop(self.worksheet_name())
 
-    def get_celltable(self):
-        return self.cellbase[self.worksheet_name()]
-
-    celltable = property(fget=get_celltable)
-
     def __len__(self):
-        """
-        :return: Length of rows doesn't include header
-        """
+        """ Length of rows doesn't include header """
         return len(self.celltable)
 
     def __getitem__(self, row_idx):
-        """
-        Automatically return list of entities when row_idx is callable, else
-        return single entity object or None
-
-        :param row_idx: Can be row index or callable
-        :return:
-            List of entities when row_idx is callable,
-            else single entity object or None
-        """
+        """ Return list of entities when row_idx is callable, else return single entity object or None """
         result = [self.new_entity().from_dict(value) for value in self.celltable[row_idx]]
         return result if callable(row_idx) else result[0] if result else None
 
     def __setitem__(self, row_idx, entity):
-        """
-        Update if contains row_idx else insert.
-        Insert will raise UserWarning when row_idx is callable
-
-        :param row_idx: Row index or callable
-        :param entity: Entity to set
-        :raise UserWarning: When row_idx is callable and row_idx is not exists
-        :type entity: Entity
-        """
+        """ Update if contains row_idx else insert. Insert will raise UserWarning when row_idx is callable """
         self.celltable[row_idx] = entity.to_dict()
 
-    def __delitem__(self, row_idx):
-        """
-        Delete with row index
-
-        :param row_idx: Row index or callable
-        """
-        del self.celltable[row_idx]
+    def __delitem__(self, row_idx_or_callable):
+        """ Delete with row index or callable"""
+        del self.celltable[row_idx_or_callable]
 
     def __contains__(self, row_idx):
-        """
-        Check if row index exists in Celltable
-
-        :param row_idx: Row index or callable
-        :return: If row exists
-        :rtype: bool
-        """
+        """ Check if row index exists in Celltable """
         return self.celltable[row_idx]
 
 
@@ -183,9 +152,7 @@ class Entity(ABC):
     Associate with :class:`DAO` to convert data to desired type
     """
     def __init__(self):
-        """
-        Call super() to declare row_idx
-        """
+        """ Call super() to declare row_idx """
         self.row_idx = None
 
     @abstractmethod
