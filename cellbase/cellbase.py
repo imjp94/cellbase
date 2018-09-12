@@ -117,17 +117,6 @@ class Cellbase(ABC):
     def _on_save(self, path, filename):
         pass
 
-    @abstractmethod
-    def remove_empty_cols(self, worksheet_name):
-        """
-        Remove 1st row's columns where its value is None. It does not inspect the whole column, so use it with care if
-        there's data that you would like to preserve under empty header
-
-        :param worksheet_name: Name of worksheet to remove empty columns
-        :type worksheet_name str
-        """
-        pass
-
     def register(self, on_create):
         """
         Register format of worksheet to deal with, only required for newly created worksheet
@@ -331,11 +320,6 @@ class LocalCellbase(Cellbase):
     def _on_save(self, path, filename):
         self.workbook.save(os.path.join(path, filename))
 
-    def remove_empty_cols(self, worksheet_name):
-        worksheet = self.workbook[worksheet_name]
-        for empty_col in reversed([col_id for col_id in worksheet[1] if col_id.value is None]):
-            worksheet.delete_cols(empty_col.col_idx)
-
 
 class GoogleCellbase(Cellbase):
     ATTRIBUTES = ('client_secret', 'service_account_file', 'credentials_directory')
@@ -375,11 +359,6 @@ class GoogleCellbase(Cellbase):
 
     def _on_save(self, path, filename):
         self.workbook.export(self.export_format, path, filename)
-
-    def remove_empty_cols(self, worksheet_name):
-        worksheet = self.workbook.worksheet_by_title(worksheet_name)
-        for empty_col in reversed([col_id for col_id in worksheet[1] if col_id.value is None]):
-            worksheet.delete_cols(empty_col.col_idx)
 
     def __getattr__(self, attr):
         try:
