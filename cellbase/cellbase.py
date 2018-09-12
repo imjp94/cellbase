@@ -18,10 +18,9 @@ class Cellbase(ABC):
     def __init__(self):
         self.filename = Cellbase.DEFAULT_FILENAME
         self.workbook = None
-        self.on_create = {}
+        self.schemas = {}
         self.celltables = {}
 
-    @abstractmethod
     def load(self, filename):
         """
         Load workbook from given filename
@@ -35,6 +34,68 @@ class Cellbase(ABC):
         :return: self
         :rtype: Cellbase
         """
+        self.filename = filename
+        self._on_load()
+        return self
+
+    def create_if_none(self, worksheet_name):
+        """
+        Create worksheet and add to cell_tables if there's no such worksheet. It is first called in every data
+        accessing methods like query, insert, update, etc.
+
+        :param worksheet_name: Name of worksheet to inspect or create if required
+        :type worksheet_name: str
+        """
+        if worksheet_name not in self.celltables:
+            if self.schemas is None:
+                raise ValueError(
+                    "Trying to create Celltable '%s' without schema " % worksheet_name)
+            self.celltables[worksheet_name] = self._on_create(worksheet_name)
+
+    def drop(self, worksheet_name):
+        """
+        Delete specified worksheet.
+
+        :param worksheet_name: Name of worksheet to delete
+        :type worksheet_name: str
+        """
+        self._on_drop(worksheet_name)
+        self.celltables.pop(worksheet_name)
+
+    def save_as(self, filename, overwrite=False):
+        """
+        Save workbook to filename. FileExistsError will be raised if file exists and overwrite is False.
+
+        :param filename: Path to save the workbook
+        :type filename: str
+        :param overwrite: Whether to overwrite if file exists
+        :type overwrite: bool
+        :raises FileExitsError: File exists and overwrite is False
+        """
+        if os.path.exists(filename) and not overwrite:
+            raise FileExistsError("%s already exists, set overwrite=True if this is expected.")
+        self._on_save(filename)
+
+    def save(self):
+        """
+        Save workbook to the filename specified in open, overwrite if file exist.
+        """
+        self.save_as(self.filename, overwrite=True)
+
+    @abstractmethod
+    def _on_load(self):
+        pass
+
+    @abstractmethod
+    def _on_create(self, worksheet_name):
+        pass
+
+    @abstractmethod
+    def _on_drop(self, worksheet):
+        pass
+
+    @abstractmethod
+    def _on_save(self, filename):
         pass
 
     @abstractmethod
@@ -48,46 +109,6 @@ class Cellbase(ABC):
         """
         pass
 
-    @abstractmethod
-    def create_if_none(self, worksheet_name):
-        """
-        Create worksheet and add to cell_tables if there's no such worksheet. It is first called in every data
-        accessing methods like query, insert, update, etc.
-
-        :param worksheet_name: Name of worksheet to inspect or create if required
-        :type worksheet_name: str
-        """
-        pass
-
-    @abstractmethod
-    def drop(self, worksheet_name):
-        """
-        Delete specified worksheet.
-
-        :param worksheet_name: Name of worksheet to delete
-        :type worksheet_name: str
-        """
-        pass
-
-    @abstractmethod
-    def save_as(self, filename, overwrite=False):
-        """
-        Save workbook to filename. FileExistsError will be raised if file exists and overwrite is False.
-
-        :param filename: Path to save the workbook
-        :type filename: str
-        :param overwrite: Whether to overwrite if file exists
-        :type overwrite: bool
-        :raises FileExitsError: File exists and overwrite is False
-        """
-        pass
-
-    def save(self):
-        """
-        Save workbook to the filename specified in open, overwrite if file exist.
-        """
-        self.save_as(self.filename, overwrite=True)
-
     def register(self, on_create):
         """
         Register format of worksheet to deal with, only required for newly created worksheet
@@ -98,7 +119,7 @@ class Cellbase(ABC):
         :type on_create: dict
         :return:
         """
-        self.on_create.update(on_create)
+        self.schemas.update(on_create)
 
     def query(self, worksheet_name, where=None):
         """
@@ -265,28 +286,17 @@ class LocalCellbase(Cellbase):
         self.filename = os.path.join(os.getcwd(), Cellbase.DEFAULT_FILENAME)
         self.workbook = Workbook()
 
-    def load(self, filename):
-        self.filename = filename
-        self.workbook = load_workbook(filename) if os.path.exists(filename) else Workbook()
+    def _on_load(self):
+        self.workbook = load_workbook(self.filename) if os.path.exists(self.filename) else Workbook()
         for worksheet in self.workbook.worksheets:
             self.celltables[worksheet.title] = LocalCelltable(worksheet)
-        return self
 
-    def remove_empty_cols(self, worksheet_name):
-        worksheet = self.workbook[worksheet_name]
-        for empty_col in reversed([col_id for col_id in worksheet[1] if col_id.value is None]):
-            worksheet.delete_cols(empty_col.col_idx)
+    def _on_create(self, worksheet_name):
+        worksheet = self.workbook.create_sheet(title=worksheet_name)
+        worksheet.append(self.schemas[worksheet_name])
+        return LocalCelltable(worksheet)
 
-    def create_if_none(self, worksheet_name):
-        if worksheet_name not in self.celltables:
-            if self.on_create is None:
-                raise ValueError(
-                    "Trying to create Celltable '%s' without specifying details in on_create" % worksheet_name)
-            worksheet = self.workbook.create_sheet(title=worksheet_name)
-            worksheet.append(self.on_create[worksheet_name])
-            self.celltables[worksheet.title] = LocalCelltable(worksheet)
-
-    def drop(self, worksheet_name):
+    def _on_drop(self, worksheet_name):
         worksheet_to_drop = self.celltables[worksheet_name].worksheet
         # Workbook must contain at least 1 visible sheet
         visible_sheets = [worksheet for worksheet in self.workbook.worksheets
@@ -294,49 +304,69 @@ class LocalCellbase(Cellbase):
         if len(visible_sheets) == 1 and visible_sheets[0] is worksheet_to_drop:
             self.workbook.create_sheet()
         self.workbook.remove(worksheet_to_drop)
-        self.celltables.pop(worksheet_name)
 
-    def save_as(self, filename, overwrite=False):
-        if os.path.exists(filename) and overwrite is False:
-            raise FileExistsError("%s already exists, set overwrite=True if this is expected.")
+    def _on_save(self, filename):
         self.workbook.save(filename)
+
+    def remove_empty_cols(self, worksheet_name):
+        worksheet = self.workbook[worksheet_name]
+        for empty_col in reversed([col_id for col_id in worksheet[1] if col_id.value is None]):
+            worksheet.delete_cols(empty_col.col_idx)
 
 
 class GoogleCellbase(Cellbase):
-    def __init__(self):
-        super().__init__()
+    ATTRIBUTES = ('client_secret', 'service_account_file', 'credentials_directory', 'folder_id')
 
-    def load(self, filename, client_secret='client_secret.json', service_account_file=None, credentials_directory='',
-             template=None, on_create_folder=None):
-        self.filename = filename
-        client = pygsheets.authorize(client_secret, service_account_file)
+    def __init__(self, export_path='', export_format=ExportType.CSV, **kwargs):
+        super().__init__()
+        unexpected_attrs = [attr for attr in kwargs if attr not in GoogleCellbase.ATTRIBUTES]
+        print(unexpected_attrs)
+        if unexpected_attrs:
+            raise AttributeError("Unexpected attribute%s, expecting%s only" %
+                                 (unexpected_attrs, GoogleCellbase.ATTRIBUTES))
+        else:
+            self.__dict__.update(kwargs)
+        self.export_format = export_format
+        self.export_path = export_path
+
+    def _on_load(self, ):
+        client = pygsheets.authorize(self.client_secret, self.service_account_file, self.credentials_directory)
         try:
-            self.workbook = client.open(filename)
+            self.workbook = client.open(self.filename)
         except SpreadsheetNotFound:
-            self.workbook = client.create(filename, template, on_create_folder or 'root')
+            self.workbook = client.create(self.filename, folder=self.folder_id or 'root')
         for worksheet in self.workbook.worksheets():
-            self.celltables[worksheet.title] = GoogleCelltable(worksheet, worksheet.title in self.on_create)
-        return self
+            self.celltables[worksheet.title] = GoogleCelltable(worksheet, worksheet.title in self.schemas)
+
+    def _on_create(self, worksheet_name):
+        worksheet = self.workbook.add_worksheet(worksheet_name)
+        worksheet.insert_rows(1, values=self.schemas[worksheet_name])
+        return GoogleCelltable(worksheet)
+
+    def _on_drop(self, worksheet_name):
+        # TODO: Should make sure there is at least 1 visible worksheet else create 1 before delete
+        worksheet_to_drop = self.workbook.worksheet_by_title(worksheet_name)
+        self.workbook.del_worksheet(worksheet_to_drop)
+
+    def _on_save(self, filename):
+        self.workbook.export(self.export_format, self.export_path, filename)
 
     def remove_empty_cols(self, worksheet_name):
         worksheet = self.workbook.worksheet_by_title(worksheet_name)
         for empty_col in reversed([col_id for col_id in worksheet[1] if col_id.value is None]):
             worksheet.delete_cols(empty_col.col_idx)
 
-    def create_if_none(self, worksheet_name):
-        if worksheet_name not in self.celltables:
-            if self.on_create is None:
-                raise ValueError(
-                    "Trying to create Celltable '%s' without specifying details in on_create" % worksheet_name)
-            variables = self.on_create[worksheet_name]
-            worksheet = self.workbook.add_worksheet(worksheet_name)
-            worksheet.insert_rows(1, values=variables)
-            self.celltables[worksheet.title] = GoogleCelltable(worksheet)
-
-    def drop(self, worksheet_name):
-        worksheet_to_drop = self.workbook.worksheet_by_title(worksheet_name)
-        self.workbook.del_worksheet(worksheet_to_drop)
-        self.celltables.pop(worksheet_name)
-
-    def save_as(self, filename, overwrite=False, file_format=ExportType.XLS):
-        self.workbook.export(file_format, '', filename)
+    def __getattr__(self, attr):
+        try:
+            return self.__dict__[attr]
+        except KeyError:
+            if attr not in GoogleCellbase.ATTRIBUTES:
+                raise AttributeError("Unexpected attribute %s, expecting%s only" % (attr, GoogleCellbase.ATTRIBUTES))
+            else:
+                default = None
+                if attr == 'client_secret':
+                    default = 'client_secret.json'
+                    self.__dict__[attr] = default
+                else:
+                    self.__dict__[attr] = default
+                return default
