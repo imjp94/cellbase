@@ -83,11 +83,10 @@ class Celltable(ABC):
         :return: Number of rows updated
         :rtype: int
         """
-        if not where:
-            try:
-                where = {DAO.COL_ROW_IDX: value_in_dict[DAO.COL_ROW_IDX]}
-            except KeyError:
-                raise KeyError("row_idx not found, it must be provided if 'where' is omitted")
+        if DAO.COL_ROW_IDX in value_in_dict:
+            where = {DAO.COL_ROW_IDX: value_in_dict[DAO.COL_ROW_IDX]}
+        elif not where:
+            raise KeyError("row_idx not found, it must be provided if 'where' is omitted")
         return self.traverse(lambda cell: self._set_cell_attr(cell, 'value', value_in_dict[self._get_col_name(cell)]),
                              where)
 
