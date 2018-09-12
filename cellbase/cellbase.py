@@ -304,7 +304,7 @@ class LocalCellbase(Cellbase):
             self.celltables[worksheet.title] = LocalCelltable(worksheet)
 
     def _on_create(self, worksheet_name):
-        worksheet = self.workbook.create_sheet(title=worksheet_name)
+        worksheet = self.workbook.create_sheet(title=worksheet_name, index=0)
         worksheet.append(self.schemas[worksheet_name])
         return LocalCelltable(worksheet)
 
@@ -348,7 +348,7 @@ class GoogleCellbase(Cellbase):
             self.celltables[worksheet.title] = GoogleCelltable(worksheet, worksheet.title in self.schemas)
 
     def _on_create(self, worksheet_name):
-        worksheet = self.workbook.add_worksheet(worksheet_name)
+        worksheet = self.workbook.add_worksheet(title=worksheet_name, index=0)
         worksheet.update_row(1, self.schemas[worksheet_name])
         return GoogleCelltable(worksheet)
 
