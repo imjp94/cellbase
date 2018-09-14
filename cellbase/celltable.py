@@ -348,7 +348,7 @@ class RemoteCelltable(Celltable):
         return self._has_fetched
 
     def fetch(self):
-        self._on_fetch()
+        self._parse(*self._on_fetch())
         self._has_fetched = True
 
     @abstractmethod
@@ -402,7 +402,7 @@ class GoogleCelltable(RemoteCelltable):
 
     def _on_fetch(self):
         all_rows = self._worksheet.get_all_values('cell')
-        self._parse(all_rows[0], all_rows[1:], lambda cell: cell.unlink())
+        return all_rows[0], all_rows[1:], lambda cell: cell.unlink()
 
     def _formatter_cls(self):
         return GoogleCellFormatter
