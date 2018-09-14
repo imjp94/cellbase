@@ -21,18 +21,22 @@ class Celltable(ABC):
 
     @property
     def row_idxs(self):
+        """ Row indexes of all entries, start from 2 """
         return (i for i, _ in enumerate(self._rows, 2))
 
     @property
     def col_names(self):
+        """ Column names that defined in first row except empty columns """
         return (self._get_cell_attr(col_id, 'value') for col_id in self._col_ids)
 
     @property
     def size(self):
+        """ Size of entries, same as len """
         return self._size
 
     @property
     def last_row_idx(self):
+        """ Row index of last entry """
         return self._size + 1
 
     def query(self, where=None):
@@ -133,21 +137,29 @@ class Celltable(ABC):
 
     @abstractmethod
     def _on_insert(self, data, new_row_idx):
+        """ Called when inserting row to actual worksheet, given data & expected new row index """
         pass
 
     @abstractmethod
     def _on_delete(self, shifted_coords, popped_coords):
+        """
+        Called when deleting rows from actual worksheet, where shifted_coords require update and popped_coords
+        should be deleted. coords = [(row_idx, col_idx)]
+        """
         pass
 
     @abstractmethod
     def _on_traverse(self, cells):
+        """ Called when traversing cells, given cells to update """
         pass
 
     @abstractmethod
     def _formatter_cls(self):
+        """ Class of Formatter to use when formatting """
         pass
 
     def _parse(self, first_row, content_row, on_parse_cell=None):
+        """ Parse first row as col_id and content row as entries, while on_parse_cell called on every content cells """
         self._col_ids = [col_id for col_id in first_row if self._get_cell_attr(col_id, 'value')]
         for row in content_row:
             row_idx = self._get_cell_attr(row[0], 'row')
@@ -165,6 +177,10 @@ class Celltable(ABC):
         self._rows = self._rows[:self.size]
 
     def _pop_rows(self, row_idxs):
+        """
+        Pop rows locally and return shifted_coords and popped_coords, where shifted_coords require update and
+        popped_coords should be deleted
+        """
         row_idxs_affected = list(range(row_idxs[0], self.last_row_idx + 1))
         row_idxs_remain = [row_idx for row_idx in row_idxs_affected if row_idx not in row_idxs]
         shifted_coords = []
@@ -250,15 +266,19 @@ class Celltable(ABC):
         self._get_row(idx)[name] = cell
 
     def _cell_attrs(self):
+        """ Attributes to safely access from Cell object """
         return Celltable.DEFAULT_CELL_ATTRS
 
     def _get_cell_attr(self, cell, attr):
+        """ Safe method to get row, col, or value from cell """
         return getattr(cell, self._cell_attrs()[attr])
 
     def _set_cell_attr(self, cell, attr, value):
+        """ Safe method to set row, col, or value to cell """
         setattr(cell, self._cell_attrs()[attr], value)
 
     def _get_col_idx(self, cell_or_name):
+        """ Get actual column index in worksheet from Cell object or column name"""
         if not isinstance(cell_or_name, str):
             name = self._get_cell_attr(cell_or_name, 'value')
         else:
@@ -305,6 +325,7 @@ class Celltable(ABC):
 
 
 class LocalCelltable(Celltable):
+    """ Celltable that handle local worksheet with openpyxl """
     LOCAL_CELL_ATTRS = {'value': 'value', 'row': 'row', 'col': 'col_idx'}
 
     def __init__(self, worksheet):
@@ -337,7 +358,10 @@ class LocalCelltable(Celltable):
 
 
 class RemoteCelltable(Celltable):
+    """ Celltable that handle remote worksheet """
+
     def __init__(self, worksheet, fetch=False):
+        """ Whether to fetch on init """
         super().__init__(worksheet)
         self._has_fetched = False
         if fetch:
@@ -345,17 +369,21 @@ class RemoteCelltable(Celltable):
 
     @property
     def has_fetched(self):
+        """ Has data ever been fetched """
         return self._has_fetched
 
     def fetch(self):
+        """ Force to fetch, then parse data """
         self._parse(*self._on_fetch())
         self._has_fetched = True
 
     @abstractmethod
     def _on_fetch(self):
+        """ When the fetching is performed, expected to return first_row, content_row, on_parse_cell for parsing """
         pass
 
     def _fetch_if_havent(self):
+        """ Fetch if haven't """
         if not self._has_fetched:
             self.fetch()
 
@@ -377,6 +405,8 @@ class RemoteCelltable(Celltable):
 
 
 class GoogleCelltable(RemoteCelltable):
+    """ Celltable that handle Google Sheet API """
+
     def __init__(self, worksheet, fetch=False):
         super().__init__(worksheet, fetch)
 
