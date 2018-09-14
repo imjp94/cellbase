@@ -9,7 +9,7 @@ from cellbase.celltable import LocalCelltable, GoogleCelltable
 
 class Cellbase(ABC):
     """
-    Cellbase is equivalent to :class:`Workbook` which stores :class:`Celltable`
+    Cellbase is equivalent to Workbook that consist of Worksheets
     """
     DEFAULT_FILENAME = 'cellbase.xlsx'
 
@@ -22,14 +22,17 @@ class Cellbase(ABC):
 
     @property
     def path(self):
+        """ Path to the workbook """
         return self._path
 
     @property
     def filename(self):
+        """ Name of workbook """
         return self._filename
 
     @property
     def dir(self):
+        """ Full directory of workbook(path/filename) """
         return os.path.join(self.path, self.filename)
 
     def load(self, path, filename, raise_err=False):
@@ -75,18 +78,27 @@ class Cellbase(ABC):
 
     @abstractmethod
     def _on_load(self, raise_err):
+        """ When actual loading perform """
         pass
 
     @abstractmethod
     def _on_create(self, name):
+        """ When creating new workbook, expected to return new Celltable instance """
         pass
 
     @abstractmethod
     def _on_drop(self, worksheet):
+        """ When deleting celltable/worksheet """
         pass
 
     @abstractmethod
     def _on_save(self, path, filename):
+        """
+        When actual saving performed.
+
+        Should be saved to given path & filename instead of self.path & self.filename, as save_as is the base method of
+        save, so there's no guarantee that self.path & self.filename are the desire directory when saving.
+        """
         pass
 
     def register(self, schema):
@@ -206,6 +218,7 @@ class Cellbase(ABC):
 
 
 class LocalCellbase(Cellbase):
+    """ Cellbase that handle local workbook with openpyxl """
 
     def __init__(self):
         super().__init__()
@@ -240,10 +253,11 @@ class LocalCellbase(Cellbase):
 
 
 class RemoteCellbase(Cellbase, metaclass=ABCMeta):
+    """ Cellbase that handle remote workbook """
+
     def __init__(self, **kwargs):
         super().__init__()
         unexpected_attrs = [attr for attr in kwargs if attr not in self.attrs()]
-        print(unexpected_attrs)
         if unexpected_attrs:
             raise AttributeError("Unexpected attribute%s, expecting%s only" %
                                  (unexpected_attrs, GoogleCellbase.ATTRIBUTES))
@@ -252,6 +266,7 @@ class RemoteCellbase(Cellbase, metaclass=ABCMeta):
 
     @abstractmethod
     def attrs(self):
+        """ Possible attributes required """
         pass
 
     def __getattr__(self, attr):
@@ -266,14 +281,45 @@ class RemoteCellbase(Cellbase, metaclass=ABCMeta):
 
 
 class GoogleCellbase(RemoteCellbase):
+    """ Cellbase that handle workbook from Google Drive through Google Sheet API """
     ATTRIBUTES = ('client_secret', 'service_account_file', 'credentials_directory')
 
-    def __init__(self, export_format=pygsheets.ExportType.CSV, **kwargs):
+    def __init__(self, export_path='', export_format=pygsheets.ExportType.CSV, **kwargs):
+        """
+        Both export_path & export_format are used when saving, as GoogleCellbase's save method behave differently which
+        export google spreadsheet to local.
+
+        :param kwargs: See GoogleCellbase.ATTRIBUTES for possible arguments
+        """
         super().__init__(**kwargs)
+        self.export_path = export_path
         self.export_format = export_format
 
     def attrs(self):
         return GoogleCellbase.ATTRIBUTES
+
+    def load(self, path, filename, raise_err=False):
+        """
+        Path can be `folder id <https://developers.google.com/drive/api/v3/folder/>`_ in Google Drive or empty string
+        where workbook will be created in root folder of Google Drive by default.
+        """
+        super().load(path, filename, raise_err)
+
+    def save(self):
+        """
+        As Google Spreadsheet does not required saving, save method is used to export Google Spreadsheet to export_path
+        and same filename as loaded spreadsheet.
+        """
+        self.save_as(self.export_path, self.filename, True)
+
+    def save_as(self, path, filename, overwrite=False):
+        """
+        As Google Spreadsheet does not required saving, save_as method is used to export Google Spreadsheet to given
+        path and filename.
+
+        FileExistsError will be raised if file exists. Set overwrite to True to allow overwriting.
+        """
+        super().save_as(path, filename, overwrite)
 
     def _on_load(self, raise_err):
         client = pygsheets.authorize(self.client_secret or 'client_secret.json', self.service_account_file,
@@ -308,6 +354,7 @@ class GoogleCellbase(RemoteCellbase):
 
 
 def new_worksheet_title(titles, counter=0, name='Sheet'):
+    """ Simple helper to recursively generate new title """
     new_name = '%s%s' % (name, counter or '')
     if new_name in titles:
         return new_worksheet_title(titles, counter + 1, name)
