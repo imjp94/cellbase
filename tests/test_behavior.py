@@ -18,26 +18,29 @@ class TestBehavior:
     def dao(self, cellbase):
         return SimpleDAO(cellbase)
 
-    def test_insert_and_query(self, dao):
-        simple = Simple(id=1, name="test_simple")
-        dao.insert(simple)
-        assert simple.row_idx in dao.cellbase.celltables[SimpleDAO.TABLE_NAME]
-        assert simple == dao.query({DAO.COL_ROW_IDX: lambda row_idx: row_idx > 1})[0]
 
-    def test_query_all_and_row_idx_lambda(self, dao):
-        for i in range(5):
-            dao.insert(Simple(id=i, name="simple%s" % i))
-        row_size = len(dao.cellbase.celltables[SimpleDAO.TABLE_NAME]._rows)
-        assert row_size == len(dao.query())
-        # 5 rows inserted to row index 2, 3, 4, 5, 6
-        simples_row_idx_4_to_6 = dao[lambda row_idx: 4 <= row_idx <= 6]
-        assert len(simples_row_idx_4_to_6) == 3
-        for i in range(3):
-            assert simples_row_idx_4_to_6[i].row_idx == i + 4
+class TestCelltableBehavior(TestBehavior):
+    def test_insert(self, dao):
+        assert dao.celltable.size == 0
+        simple = populate(dao)[0]
+        assert dao.celltable.size == 1
+        assert simple == dao.query()[0]
+
+    def test_query_all(self, dao):
+        num_row = 5
+        populate(dao, num_row)
+        assert num_row == len(dao.query())
+
+    def test_query_with_callable(self, dao):
+        num_row = 5
+        populate(dao, num_row)  # 5 rows inserted to row index 2, 3, 4, 5, 6
+        simples_4_to_6 = dao[lambda row_idx: 4 <= row_idx <= 6]
+        assert len(simples_4_to_6) == 3
+        for i in range(4, 7):
+            assert simples_4_to_6[i - 4].row_idx == i
 
     def test_update(self, dao):
-        simple = Simple(id=2, name="orig_simple")
-        dao.insert(simple)
+        simple = populate(dao)[0]
         simple_to_update = Simple(id=3, name="updated_simple")
         simple_to_update.row_idx = simple.row_idx
         assert simple_to_update != dao.query({DAO.COL_ROW_IDX: simple.row_idx})[0]
@@ -46,8 +49,7 @@ class TestBehavior:
         assert simple != simple_to_update
 
     def test_delete(self, dao):
-        simple = Simple(id=4, name="simple_to_delete")
-        dao.insert(simple)
+        simple = populate(dao)[0]
         deleted_count = dao.delete({DAO.COL_ROW_IDX: simple.row_idx})
         assert deleted_count == 1
         assert dao.query({DAO.COL_ROW_IDX: simple.row_idx}) == []
@@ -79,48 +81,88 @@ class TestBehavior:
         dao.traverse(lambda cell: format_match(cell, formatter), {DAO.COL_ROW_IDX: simple_formatted.row_idx})
         dao.traverse(lambda cell: format_not_match(cell, formatter), {DAO.COL_ROW_IDX: simple_not_formatted.row_idx})
 
-    def test_dao_and_celltable_magic_methods(self, dao):
-        simple = Simple(id=1, name="test_simple")
-        dao.insert(simple)
-        assert simple.row_idx in dao  # __contains__
-        assert simple == dao[simple.row_idx]  # __getitem__ not callable return entity
-        assert simple == dao[lambda row_idx: row_idx == simple.row_idx][0]  # callable return list
-        assert len(dao) == 1  # __len__
-        # __setitem__
-        simple.name = "updated_simple"
-        dao[simple.row_idx] = simple
-        assert dao[simple.row_idx].name == "updated_simple"
-        # __delitem__
+
+class TestCellbaseBehavior(TestBehavior):
+    @pytest.fixture
+    def cellbase(self):
+        cellbase = super().cellbase()
+        cellbase.create_if_none(SimpleDAO.TABLE_NAME)
+        return cellbase
+
+    def test_contains(self, cellbase):
+        assert SimpleDAO.TABLE_NAME in cellbase
+
+    def test_getitem(self, cellbase):
+        assert cellbase[SimpleDAO.TABLE_NAME] == cellbase.celltables[SimpleDAO.TABLE_NAME]
+
+    def test_setitem(self, cellbase):
+        with pytest.raises(AssertionError):
+            cellbase[SimpleDAO.TABLE_NAME] = LocalCelltable(cellbase._workbook.create_sheet(title=SimpleDAO.TABLE_NAME))
+
+    def test_delitem(self, cellbase):
+        del cellbase.celltables[SimpleDAO.TABLE_NAME]
+        assert SimpleDAO.TABLE_NAME not in cellbase
+
+    def test_len(self, cellbase):
+        assert len(cellbase) == 2  # Default worksheet + Simple worksheet
+
+
+class TestHelperBehavior(TestBehavior):
+    def test_contains(self, dao):
+        simple = populate(dao)[0]
         assert simple.row_idx in dao
-        dao.delete({DAO.COL_ROW_IDX: simple.row_idx})
-        assert simple.row_idx not in dao
-        # _setitem__ with callable
+
+    def test_getitem(self, dao):
+        simple = populate(dao)[0]
+        assert simple == dao[simple.row_idx]
+
+    def test_getitem_with_callable(self, dao):
+        simple = populate(dao)[0]
+        assert simple == dao[lambda row_idx: row_idx == simple.row_idx][0]
+
+    def test_setitem(self, dao):
+        simple = populate(dao)[0]
+        assert dao[simple.row_idx].name == simple.name
+        new_name = "updated_simple"
+        simple.name = new_name
+        dao[simple.row_idx] = simple
+        assert dao[simple.row_idx].name == new_name
+
+    def test_setitem_with_callable(self, dao):
         simple_new = Simple(id=0, name='new_simple')
         with pytest.warns(UserWarning):
             dao[lambda row_idx: 2 <= row_idx <= 6] = simple_new
         assert len(dao) == 0  # Insert with callable should have no effect at all
-        for i in range(5):  # Add row 2, 3, 4, 5, 6
-            dao.insert(Simple(id=i, name="simple%s" % i))
+        populate(dao, 5)
         dao[lambda row_idx: 4 <= row_idx <= 6] = simple_new
-        for i in range(3):
-            simple_at = dao[i + 4]
+        for i in range(4, 7):
+            simple_at = dao[i]
             assert simple_new.id == simple_at.id
             assert simple_new.name == simple_at.name
-        # __delitem__ with callable
+
+    def test_len(self, dao):
+        populate(dao)
+        assert len(dao) == 1
+
+    def test_delitem(self, dao):
+        simple = populate(dao)[0]
+        assert simple.row_idx in dao
+        dao.delete({DAO.COL_ROW_IDX: simple.row_idx})
+        assert simple.row_idx not in dao
+
+    def test_delitem_with_callable(self, dao):
+        num_row = 5
+        populate(dao, num_row)
+        assert len(dao) == num_row
         del dao[lambda row_idx: row_idx > 1]
         assert len(dao) == 0
 
-    def test_cellbase_magic_methods(self, cellbase):
-        cellbase.create_if_none(SimpleDAO.TABLE_NAME)
-        assert len(cellbase), 1  # __len__
-        assert SimpleDAO.TABLE_NAME in cellbase  # __contains__
-        assert cellbase[SimpleDAO.TABLE_NAME] == cellbase.celltables[SimpleDAO.TABLE_NAME]  # __getitem__
-        # __delitem__
-        del cellbase.celltables[SimpleDAO.TABLE_NAME]
-        assert SimpleDAO.TABLE_NAME not in cellbase
-        # __setitem__
-        with pytest.raises(AssertionError):
-            cellbase[SimpleDAO.TABLE_NAME] = LocalCelltable(cellbase._workbook.create_sheet(title=SimpleDAO.TABLE_NAME))
+
+def populate(dao, num=1):
+    data = []
+    for i in range(num):
+        data.append(dao.insert(Simple(i, "simple%s" % i)))
+    return data
 
 
 def all_format(cell, formatter):
