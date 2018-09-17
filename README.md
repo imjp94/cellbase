@@ -285,7 +285,7 @@ cells(openpyxl.cell.Cell) through traverse:
 dao.traverse(lambda cell: do_something(cell), where, select)
 ```
 
-### For more example, checkout [Tests](tests/cellbase_test.py)
+### For more example, checkout [Tests](tests/test_behavior.py)
 
 ## License
 
